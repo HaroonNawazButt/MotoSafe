@@ -1,5 +1,6 @@
 {
   "expo": {
+    "scheme": "motosafe",
     "name": "MotoSafe",
     "slug": "MotoSafe",
     "version": "1.0.0",
@@ -20,10 +21,28 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.haroon.motosafe"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
-    }
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "d9dfd6a4-ad72-4a12-b796-71c9af807273"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/d9dfd6a4-ad72-4a12-b796-71c9af807273"
+    },
+    "owner": "motosafe"
   }
 }
