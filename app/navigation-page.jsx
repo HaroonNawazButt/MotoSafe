@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useRouter } from "expo-router";
+import * as Location from "expo-location";
 
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 
@@ -289,6 +290,86 @@ export default function NavigationPage() {
 
   const [destination, setDestination] = useState("FAST NUCES");
 
+  const [currentLocation, setCurrentLocation] = useState(null);
+  const [locationError, setLocationError] = useState(null);
+
+  useEffect(() => {
+    let locationSubscription = null;
+    let isMounted = true;
+
+    const startLocationTracking = async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+
+        if (status !== "granted") {
+          if (isMounted) {
+            setLocationError("Location permission was denied.");
+          }
+          return;
+        }
+
+        const initialLocation = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.High,
+        });
+
+        if (isMounted) {
+          setCurrentLocation(initialLocation);
+          setLocationError(null);
+        }
+
+        locationSubscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.High,
+            timeInterval: 2000,
+            distanceInterval: 5,
+          },
+          (location) => {
+            if (isMounted) {
+              setCurrentLocation(location);
+              setLocationError(null);
+            }
+          },
+        );
+      } catch (error) {
+        console.error("Location tracking error:", error);
+
+        if (isMounted) {
+          setLocationError("Unable to get current location.");
+        }
+      }
+    };
+
+    startLocationTracking();
+
+    return () => {
+      isMounted = false;
+
+      if (locationSubscription) {
+        locationSubscription.remove();
+      }
+    };
+  }, []);
+
+  const refreshLocation = async () => {
+    try {
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      setCurrentLocation(location);
+      setLocationError(null);
+
+      console.log(
+        "MotoSafe GPS:",
+        location.coords.latitude,
+        location.coords.longitude,
+      );
+    } catch (error) {
+      console.error("Location refresh error:", error);
+      setLocationError("Unable to refresh current location.");
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <MapBackground />
@@ -346,7 +427,10 @@ export default function NavigationPage() {
 
       {/* Controls */}
       <View style={styles.mapControls}>
-        <TouchableOpacity style={styles.controlBtn}>
+        <TouchableOpacity
+          style={styles.controlBtn}
+          onPress={refreshLocation}
+        >
           <MaterialCommunityIcons
             name="crosshairs-gps"
             size={20}
