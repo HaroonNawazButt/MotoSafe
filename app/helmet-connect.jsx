@@ -4,11 +4,11 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   Alert,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useRouter } from "expo-router";
 
@@ -115,7 +115,7 @@ export default function HelmetConnectPage() {
             {/* Helmet Circle */}
             <View style={styles.helmetCircle}>
               <MaterialCommunityIcons
-                name="motorbike-helmet"
+                name="motorbike"
                 size={72}
                 color="#2563eb"
               />
@@ -187,7 +187,7 @@ export default function HelmetConnectPage() {
                   ]}
                 >
                   <MaterialCommunityIcons
-                    name="motorbike-helmet"
+                    name="motorbike"
                     size={28}
                     color={
                       device.connectable

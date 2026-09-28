@@ -4,7 +4,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
   TextInput,
   ScrollView,
@@ -12,6 +11,7 @@ import {
   Platform,
   Alert,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useRouter } from "expo-router";
 
@@ -53,7 +53,7 @@ export default function SignupPage() {
         <View style={styles.heroSection}>
           <View style={styles.logoContainer}>
             <MaterialCommunityIcons
-              name="motorbike-helmet"
+              name="motorbike"
               size={56}
               color="#fff"
             />

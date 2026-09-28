@@ -10,13 +10,13 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   Modal,
   TouchableWithoutFeedback,
   Vibration,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import {
   MaterialCommunityIcons,
@@ -354,7 +354,7 @@ export default function Dashboard() {
           >
             <View style={styles.helmetIconBox}>
               <MaterialCommunityIcons
-                name="motorbike-helmet"
+                name="motorbike"
                 size={24}
                 color="#2563eb"
               />
