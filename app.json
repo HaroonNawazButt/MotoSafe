@@ -15,7 +15,10 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.haroon.motosafe"
+      "package": "com.haroon.motosafe",
+      "permissions": [
+        "android.permission.SEND_SMS"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",

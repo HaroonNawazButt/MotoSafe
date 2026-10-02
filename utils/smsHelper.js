@@ -1,13 +1,12 @@
-// app/utils/smsHelper.js
-// Sends SMS to all emergency contacts when accident is detected
-// Uses expo-sms
+// utils/smsHelper.js
+// MotoSafe emergency SMS helper
+// expo-sms opens the device SMS composer; it does not silently send SMS.
 
 import * as SMS from "expo-sms";
 
 // ── Send accident alert SMS to all contacts ───────────────────
 export async function sendAccidentSMS(contacts, accidentData) {
   try {
-    // Check if SMS is available on this device
     const isAvailable = await SMS.isAvailableAsync();
 
     if (!isAvailable) {
@@ -20,27 +19,42 @@ export async function sendAccidentSMS(contacts, accidentData) {
       return { success: false, reason: "No contacts" };
     }
 
-    // Get all phone numbers
     const phoneNumbers = contacts
-      .map((c) => c.phone)
-      .filter((p) => p && p.trim() !== "" && p !== "—");
+      .map((contact) => contact.phone)
+      .filter(
+        (phone) =>
+          phone &&
+          phone.trim() !== "" &&
+          phone !== "—"
+      );
 
     if (phoneNumbers.length === 0) {
-      return { success: false, reason: "No valid phone numbers" };
+      return {
+        success: false,
+        reason: "No valid phone numbers",
+      };
     }
 
-    // Build the message
     const message = buildAccidentMessage(accidentData);
 
-    // Send SMS to all contacts at once
-    const { result } = await SMS.sendSMSAsync(phoneNumbers, message);
+    const { result } = await SMS.sendSMSAsync(
+      phoneNumbers,
+      message
+    );
 
     console.log("[SMS] Result:", result);
-    return { success: result === "sent", result };
 
+    return {
+      success: result === "sent",
+      result,
+    };
   } catch (error) {
     console.error("[SMS] Error:", error);
-    return { success: false, reason: error.message };
+
+    return {
+      success: false,
+      reason: error.message,
+    };
   }
 }
 
@@ -48,10 +62,15 @@ export async function sendAccidentSMS(contacts, accidentData) {
 export async function sendDrowsinessSMS(contacts) {
   try {
     const isAvailable = await SMS.isAvailableAsync();
-    if (!isAvailable || !contacts || contacts.length === 0) return;
 
-    // Only send to primary contact for drowsiness
-    const primary = contacts.find((c) => c.primary) ?? contacts[0];
+    if (!isAvailable || !contacts || contacts.length === 0) {
+      return;
+    }
+
+    const primary =
+      contacts.find((contact) => contact.primary) ??
+      contacts[0];
+
     if (!primary?.phone) return;
 
     const message =
@@ -60,31 +79,47 @@ export async function sendDrowsinessSMS(contacts) {
       `Please check on them. — MotoSafe Safety System`;
 
     await SMS.sendSMSAsync([primary.phone], message);
-
   } catch (error) {
     console.error("[SMS] Drowsiness SMS error:", error);
   }
 }
 
 // ── Build accident message ────────────────────────────────────
-function buildAccidentMessage(accidentData) {
+// Exported separately so we can test the emergency message
+// without opening the SMS composer.
+export function buildAccidentMessage(accidentData = {}) {
   const time = new Date().toLocaleTimeString("en-US", {
-    hour:   "2-digit",
+    hour: "2-digit",
     minute: "2-digit",
     hour12: true,
   });
 
-  const impact = accidentData?.impact_g
-    ? `Impact force: ${Number(accidentData.impact_g).toFixed(1)}g. `
-    : "";
+  const impact =
+    accidentData?.impact_g != null &&
+      Number.isFinite(Number(accidentData.impact_g))
+      ? `Impact force: ${Number(
+        accidentData.impact_g
+      ).toFixed(1)}g.\n`
+      : "";
+
+  const latitude = Number(accidentData?.latitude);
+  const longitude = Number(accidentData?.longitude);
+
+  const hasLocation =
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude);
+
+  const locationText = hasLocation
+    ? `Location:\nhttps://maps.google.com/?q=${latitude},${longitude}\n`
+    : "Location: unavailable\n";
 
   return (
     `🚨 EMERGENCY - MotoSafe Alert 🚨\n\n` +
-    `An accident has been detected!\n` +
+    `An accident has been detected.\n` +
     `Time: ${time}\n` +
     `${impact}` +
-    `\nThe rider's helmet safety system has triggered an emergency alert. ` +
-    `Please contact them or emergency services immediately.\n\n` +
+    `${locationText}\n` +
+    `Please contact the rider or emergency services immediately.\n\n` +
     `— MotoSafe Safety System`
   );
 }

@@ -3,12 +3,13 @@
 // ✅ Lane detection REMOVED
 // ✅ Drowsiness  → reads /helmet/alerts/drowsiness + /helmet/sensors
 // ✅ Accident    → reads /helmet/alerts/accident
-// ✅ SMS sent to all emergency contacts on accident detection
-
+// 🧪 Accident countdown simulation; no automatic SMS or calls
 import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
+  NativeModules,
+  PermissionsAndroid,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
@@ -18,26 +19,40 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import * as Location from "expo-location";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   MaterialCommunityIcons,
   Feather,
   Ionicons,
   FontAwesome5,
 } from "@expo/vector-icons";
-
 import AlertBanner from "./dashboard-components/AlertBanner";
 import EmergencySOSModal from "./dashboard-components/EmergencySOSModal";
-
 // ── Firebase ──────────────────────────────────────────────────
 import { db } from "../config/firebaseConfig";
 import { ref, onValue, set } from "firebase/database";
+const ACCIDENT_COUNTDOWN_SECONDS = 30;
 
-// ── SMS + Storage (NEW) ───────────────────────────────────────
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { sendAccidentSMS } from "../utils/smsHelper";
+import {
+  buildAccidentMessage,
+} from "../utils/smsHelper";
 
-const STORAGE_KEY = "motosafe_emergency_contacts";
+import { getRoadSpeedLimit } from "../utils/roadSpeedLimit";
+import {
+  decideSpeedThreshold,
+  evaluateSpeedAlert,
+} from "../utils/speedDecision";
 
+import {
+  shouldEmitSpeedWarning,
+  shouldRearmSpeedWarning,
+} from "../utils/speedAlertCooldown";
+
+console.log(
+  "[MotoSafe NATIVE] NativeSMS available:",
+  !!NativeModules.NativeSMS
+);
 // ─────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────
@@ -47,7 +62,6 @@ const getGreeting = () => {
   if (h >= 12 && h < 17) return "Good afternoon";
   return "Good evening";
 };
-
 const formatTime = (totalSeconds) => {
   const h = Math.floor(totalSeconds / 3600);
   const m = Math.floor((totalSeconds % 3600) / 60);
@@ -55,6 +69,24 @@ const formatTime = (totalSeconds) => {
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`;
   return `${s}s`;
+};
+const getDistanceMeters = (lat1, lon1, lat2, lon2) => {
+  const earthRadiusMeters = 6371000;
+
+  const toRadians = (degrees) => (degrees * Math.PI) / 180;
+
+  const dLat = toRadians(lat2 - lat1);
+  const dLon = toRadians(lon2 - lon1);
+
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRadians(lat1)) *
+    Math.cos(toRadians(lat2)) *
+    Math.sin(dLon / 2) ** 2;
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return earthRadiusMeters * c;
 };
 
 const calcSafetyScore = (drowsiness, accident) => {
@@ -65,37 +97,222 @@ const calcSafetyScore = (drowsiness, accident) => {
   if (accident === 2) score -= 50;
   return Math.max(0, score);
 };
-
 const scoreColor = (score) => {
   if (score >= 80) return "#10b981";
   if (score >= 50) return "#f59e0b";
   return "#ef4444";
 };
-
 const STATUSES = [
   { label: "Safe", color: "#10b981", bg: "rgba(16,185,129,0.1)" },
   { label: "Warning", color: "#f59e0b", bg: "rgba(245,158,11,0.1)" },
   { label: "Alert", color: "#ef4444", bg: "rgba(239,68,68,0.1)" },
 ];
-
 // ─────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const router = useRouter();
 
   const [menuVisible, setMenuVisible] = useState(false);
   const [sosVisible, setSosVisible] = useState(false);
-
   const [helmetConnected, setHelmetConnected] = useState(false);
   const [helmetBattery, setHelmetBattery] = useState(null);
-
   const [accelG, setAccelG] = useState(0);
   const [pitchDeg, setPitchDeg] = useState(0);
   const [drowsyLevel, setDrowsyLevel] = useState(0);
   const [nodCount, setNodCount] = useState(0);
-
   const [accidentAlert, setAccidentAlert] = useState(null);
-  const [drowsinessAlert, setDrowsinessAlert] = useState(null);
+  const [countdown, setCountdown] = useState(ACCIDENT_COUNTDOWN_SECONDS);
+  const [accidentPhase, setAccidentPhase] = useState("idle"); // idle | countdown | simulated
+  const accidentPhaseRef = useRef("idle");
+  const accidentEventRef = useRef(null);
+  const accidentDeadlineRef = useRef(null);
+  const countdownTimerRef = useRef(null);
 
+  /*
+  useEffect(() => {
+    const testRoadLookup = async () => {
+      try {
+        const { status } =
+          await Location.requestForegroundPermissionsAsync();
+
+        if (status !== "granted") {
+          console.warn(
+            "[MotoSafe Road] Location permission denied.",
+          );
+          return;
+        }
+
+        const location =
+          await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.High,
+          });
+
+        const result = await getRoadSpeedLimit(
+          location.coords.latitude,
+          location.coords.longitude,
+        );
+
+        console.log("[MotoSafe Road] Lookup result:", result);
+      } catch (error) {
+        console.error(
+          "[MotoSafe Road] Diagnostic error:",
+          error,
+        );
+      }
+    };
+
+    testRoadLookup();
+  }, []);
+   */
+  const requestSMSPermission = async () => {
+    try {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.SEND_SMS,
+        {
+          title: "MotoSafe SMS Permission",
+          message:
+            "MotoSafe needs SMS permission to automatically notify your emergency contact after an accident.",
+          buttonPositive: "Allow",
+          buttonNegative: "Deny",
+        }
+      );
+
+      console.log("[MotoSafe SMS] Permission result:", granted);
+
+      return granted === PermissionsAndroid.RESULTS.GRANTED;
+    } catch (error) {
+      console.error("[MotoSafe SMS] Permission error:", error);
+      return false;
+    }
+  };
+
+  const clearAccidentTimer = () => {
+    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+    countdownTimerRef.current = null;
+    accidentDeadlineRef.current = null;
+  };
+
+  const simulateSOS = async () => {
+    if (accidentPhaseRef.current !== "countdown") return;
+
+    // Stop the countdown immediately so this emergency event
+    // cannot trigger more than once.
+    clearAccidentTimer();
+
+    accidentPhaseRef.current = "simulated";
+    setAccidentPhase("simulated");
+    setCountdown(0);
+
+    try {
+      // ── Load saved emergency contacts ───────────────────────
+      const storedContacts = await AsyncStorage.getItem(
+        "motosafe_emergency_contacts"
+      );
+
+      const contacts = storedContacts ? JSON.parse(storedContacts) : [];
+
+      console.log(
+        "[MotoSafe TEST] Emergency contacts loaded:",
+        contacts.length
+      );
+
+      // ── Check location permission ───────────────────────────
+      const { status } =
+        await Location.requestForegroundPermissionsAsync();
+
+      if (status !== "granted") {
+        console.log(
+          "[MotoSafe TEST] Location permission denied. No SMS or calls were made."
+        );
+        return;
+      }
+
+      // ── Get current GPS position ────────────────────────────
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      const { latitude, longitude } = location.coords;
+
+      const mapsLink =
+        `https://maps.google.com/?q=${latitude},${longitude}`;
+
+      console.log("[MotoSafe TEST] GPS:", latitude, longitude);
+      console.log("[MotoSafe TEST] Maps link:", mapsLink);
+
+      const emergencyMessage = buildAccidentMessage({
+        ...accidentAlert,
+        latitude,
+        longitude,
+      });
+
+      console.log(
+        "[MotoSafe TEST] Prepared emergency message:\n",
+        emergencyMessage
+      );
+
+      // ── Automatic native SMS: PRIMARY CONTACT ONLY ──────────────
+      const primaryContact =
+        contacts.find((contact) => contact.primary) ?? contacts[0];
+
+      if (!primaryContact?.phone || primaryContact.phone === "—") {
+        console.log(
+          "[MotoSafe TEST] No valid primary emergency contact. SMS was not sent."
+        );
+        return;
+      }
+
+      console.log(
+        "[MotoSafe TEST] Sending native SMS automatically to primary emergency contact."
+      );
+
+      const smsPermissionGranted = await requestSMSPermission();
+
+      if (!smsPermissionGranted) {
+        console.log(
+          "[MotoSafe TEST] SEND_SMS permission denied. SMS was not sent."
+        );
+        return;
+      }
+
+      if (!NativeModules.NativeSMS) {
+        console.error(
+          "[MotoSafe TEST] NativeSMS module is unavailable. SMS was not sent."
+        );
+        return;
+      }
+
+      const smsResult = await NativeModules.NativeSMS.sendSMS(
+        primaryContact.phone,
+        emergencyMessage
+      );
+
+      console.log(
+        "[MotoSafe TEST] Native SMS request completed:",
+        smsResult
+      );
+    } catch (error) {
+      console.error(
+        "[MotoSafe TEST] Failed to prepare emergency data:",
+        error
+      );
+    }
+  };
+
+  const beginAccidentCountdown = (event) => {
+    clearAccidentTimer();
+    accidentPhaseRef.current = "countdown";
+    setAccidentPhase("countdown");
+    setAccidentAlert(event);
+    setCountdown(ACCIDENT_COUNTDOWN_SECONDS);
+    accidentDeadlineRef.current = Date.now() + ACCIDENT_COUNTDOWN_SECONDS * 1000;
+    Vibration.vibrate([0, 400, 200, 400, 200, 400]);
+    countdownTimerRef.current = setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((accidentDeadlineRef.current - Date.now()) / 1000));
+      setCountdown(remaining);
+      if (remaining === 0) simulateSOS();
+    }, 250);
+  };
+  const [drowsinessAlert, setDrowsinessAlert] = useState(null);
   // Derived statuses
   const drowsinessStatus =
     drowsinessAlert?.detected === true
@@ -105,16 +322,15 @@ export default function Dashboard() {
       : drowsyLevel >= 2
         ? 1
         : 0;
-
   const accidentStatus = accidentAlert?.detected === true ? 2 : 0;
   const safetyScore = calcSafetyScore(drowsinessStatus, accidentStatus);
-
   // ── Firebase listeners ──────────────────────────────────────
   useEffect(() => {
     // 1. Helmet status
     const unsubStatus = onValue(ref(db, "helmet/status"), (snap) => {
       const d = snap.val();
       if (!d) return;
+
       setHelmetConnected(d.connected === true);
       setHelmetBattery(d.battery ?? null);
     });
@@ -123,39 +339,46 @@ export default function Dashboard() {
     const unsubSensors = onValue(ref(db, "helmet/sensors"), (snap) => {
       const d = snap.val();
       if (!d) return;
+
       setAccelG(d.accel_g ?? 0);
       setPitchDeg(d.pitch ?? 0);
       setDrowsyLevel(d.drowsy_lvl ?? 0);
       setNodCount(d.nod_count ?? 0);
     });
 
-    // 3. Accident alert — now async to send SMS
+    // 3. Accident alert
+    // Start the countdown only once for each active accident event.
     const unsubAcc = onValue(
       ref(db, "helmet/alerts/accident"),
-      async (snap) => {
-        const d = snap.val();
-        if (d?.detected === true) {
-          setAccidentAlert(d);
-          Vibration.vibrate([0, 400, 200, 400, 200, 400]);
 
-          // ── AUTO SMS TO ALL EMERGENCY CONTACTS ────────────
-          try {
-            const saved = await AsyncStorage.getItem(STORAGE_KEY);
-            if (saved) {
-              const contacts = JSON.parse(saved);
-              if (contacts.length > 0) {
-                console.log("[SMS] Sending to", contacts.length, "contacts");
-                await sendAccidentSMS(contacts, d);
-              }
-            }
-          } catch (e) {
-            console.error("[SMS] Failed:", e.message);
+      (snap) => {
+        const d = snap.val();
+
+        if (d?.detected === true) {
+          // Firebase may keep detected=true until the accident is acknowledged.
+          // Do not restart the countdown on repeated snapshots.
+          if (accidentEventRef.current === null) {
+            accidentEventRef.current = d.ts ?? "active";
+            beginAccidentCountdown(d);
           }
-          // ──────────────────────────────────────────────────
         } else {
+          accidentEventRef.current = null;
+
+          clearAccidentTimer();
+
+          accidentPhaseRef.current = "idle";
+          setAccidentPhase("idle");
           setAccidentAlert(null);
         }
       },
+
+      (error) => {
+        console.error(
+          "[MotoSafe] Accident listener error:",
+          error.code,
+          error.message
+        );
+      }
     );
 
     // 4. Drowsiness alert
@@ -168,25 +391,32 @@ export default function Dashboard() {
         setDrowsinessAlert(null);
       }
     });
-
     return () => {
       unsubStatus();
       unsubSensors();
       unsubAcc();
       unsubDrow();
+      clearAccidentTimer();
     };
   }, []);
-
   // ── Dismiss handlers ────────────────────────────────────────
-  const dismissAccident = () => {
+  const dismissAccident = async () => {
+    clearAccidentTimer();
+    accidentPhaseRef.current = "idle";
+    setAccidentPhase("idle");
     setAccidentAlert(null);
-    set(ref(db, "helmet/alerts/accident"), {
-      detected: false,
-      impact_g: 0,
-      tilted: false,
-      message: "",
-      ts: 0,
-    });
+    // Keep the event marked as handled until Firebase confirms detected=false.
+    try {
+      await set(ref(db, "helmet/alerts/accident"), {
+        detected: false,
+        impact_g: 0,
+        tilted: false,
+        message: "",
+        ts: 0,
+      });
+    } catch (error) {
+      console.error("[MotoSafe] Could not acknowledge accident:", error);
+    }
   };
 
   const dismissDrowsiness = () => {
@@ -199,11 +429,106 @@ export default function Dashboard() {
       ts: 0,
     });
   };
-
   // ── Ride session ────────────────────────────────────────────
   const [rideActive, setRideActive] = useState(false);
   const [rideSeconds, setRideSeconds] = useState(0);
+
+  // Real GPS ride data
+  const [currentSpeedKmh, setCurrentSpeedKmh] = useState(0);
+  const [rideDistanceKm, setRideDistanceKm] = useState(0);
+  // Ride tracking and warning references
   const intervalRef = useRef(null);
+  const rideLocationSubscriptionRef = useRef(null);
+  const previousRideLocationRef = useRef(null);
+  const lastSpeedWarningRef = useRef(null);
+
+
+  // MotoSafe speed-alert integration.
+  // Uses the existing GPS speed without creating another GPS watcher.
+  const speedDecision = decideSpeedThreshold({
+    cameraSpeedLimit: null,
+    cameraSignValid: false,
+    mapSpeedLimit: null,
+    roadType: "residential",
+    busyRoad: false,
+  });
+
+  const speedAlertResult = evaluateSpeedAlert({
+    currentSpeedKmh,
+    decision: speedDecision,
+    toleranceKmh: 0,
+  });
+
+  useEffect(() => {
+    if (!rideActive) return;
+
+    console.log("[MotoSafe Speed Decision]", {
+      currentSpeedKmh: Number(currentSpeedKmh.toFixed(1)),
+      thresholdKmh: speedDecision.effectiveSpeed,
+      source: speedDecision.source,
+      shouldWarn: speedAlertResult.shouldWarn,
+    });
+  }, [rideActive, currentSpeedKmh]);
+
+
+  // MotoSafe speed-warning event controller.
+  // Visual warning remains independent of the audio cooldown.
+  useEffect(() => {
+    if (!rideActive) {
+      lastSpeedWarningRef.current = null;
+      return;
+    }
+
+    const now = Date.now();
+
+    const result = shouldEmitSpeedWarning({
+      isOverspeeding: speedAlertResult.shouldWarn,
+      lastWarningTime: lastSpeedWarningRef.current,
+      now,
+    });
+
+    if (result.reset) {
+      const canRearm = shouldRearmSpeedWarning({
+        currentSpeedKmh,
+        thresholdKmh: speedDecision.effectiveSpeed,
+      });
+
+      if (canRearm) {
+        lastSpeedWarningRef.current = null;
+      }
+
+      return;
+    }
+
+    if (result.emit) {
+      lastSpeedWarningRef.current = now;
+
+      const message = speedDecision.busyRoadApplied
+        ? `Caution. Busy road ahead. Reduce your speed below ${speedDecision.effectiveSpeed} kilometres per hour.`
+        : `Speed warning. Reduce your speed below ${speedDecision.effectiveSpeed} kilometres per hour.`;
+
+      console.log("[MotoSafe Helmet Warning]", {
+        type: "overspeed",
+        message,
+        currentSpeedKmh: Number(currentSpeedKmh.toFixed(1)),
+        thresholdKmh: speedDecision.effectiveSpeed,
+        source: speedDecision.source,
+        reason: result.reason,
+      });
+
+      // Future integration:
+      // Send this event to the helmet speaker interface.
+      // No audio or hardware command is sent at this stage.
+    }
+  }, [
+    rideActive,
+    currentSpeedKmh,
+    speedAlertResult.shouldWarn,
+    speedDecision.effectiveSpeed,
+    speedDecision.source,
+    speedDecision.busyRoadApplied,
+  ]);
+
 
   useEffect(() => {
     if (rideActive) {
@@ -216,9 +541,113 @@ export default function Dashboard() {
     }
     return () => clearInterval(intervalRef.current);
   }, [rideActive]);
+  // Track real GPS speed and distance while a ride is active
+  useEffect(() => {
+    let cancelled = false;
 
-  const distanceKm = (rideSeconds * 0.01389).toFixed(1);
+    const startRideLocationTracking = async () => {
+      if (!rideActive) {
+        setCurrentSpeedKmh(0);
+        previousRideLocationRef.current = null;
 
+        if (rideLocationSubscriptionRef.current) {
+          rideLocationSubscriptionRef.current.remove();
+          rideLocationSubscriptionRef.current = null;
+        }
+
+        return;
+      }
+
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+
+        if (status !== "granted") {
+          console.warn("[MotoSafe Ride] Location permission denied.");
+          return;
+        }
+
+        rideLocationSubscriptionRef.current =
+          await Location.watchPositionAsync(
+            {
+              accuracy: Location.Accuracy.High,
+              timeInterval: 2000,
+              distanceInterval: 5,
+            },
+            (location) => {
+              if (cancelled) return;
+
+              const { latitude, longitude, speed, accuracy } =
+                location.coords;
+
+              // Android reports GPS speed in metres/second.
+              // Invalid/null/negative values are treated as zero.
+              const validSpeed =
+                typeof speed === "number" &&
+                  Number.isFinite(speed) &&
+                  speed > 0
+                  ? speed
+                  : 0;
+
+              const rawSpeedKmh = validSpeed * 3.6;
+
+              // MotoSafe is a motorcycle application.
+              // Suppress low-speed GPS jitter while the rider is stationary.
+              const speedKmh = rawSpeedKmh >= 10.8 ? rawSpeedKmh : 0;
+
+              setCurrentSpeedKmh(speedKmh);
+
+              const previous = previousRideLocationRef.current;
+
+              if (previous) {
+                const distanceMeters = getDistanceMeters(
+                  previous.latitude,
+                  previous.longitude,
+                  latitude,
+                  longitude,
+                );
+
+                // Ignore very small GPS movements while effectively stationary.
+                if (
+                  speedKmh >= 10.8 &&
+                  distanceMeters >= 5 &&
+                  (typeof accuracy !== "number" || accuracy <= 20)
+                ) {
+                  setRideDistanceKm(
+                    (distance) => distance + distanceMeters / 1000,
+                  );
+                }
+              }
+
+              previousRideLocationRef.current = {
+                latitude,
+                longitude,
+              };
+            },
+          );
+
+        console.log("[MotoSafe Ride] GPS tracking started.");
+      } catch (error) {
+        console.error("[MotoSafe Ride] GPS tracking error:", error);
+      }
+    };
+
+    startRideLocationTracking();
+
+    return () => {
+      cancelled = true;
+
+      if (rideLocationSubscriptionRef.current) {
+        rideLocationSubscriptionRef.current.remove();
+        rideLocationSubscriptionRef.current = null;
+      }
+    };
+  }, [rideActive]);
+  const distanceKm = rideDistanceKm.toFixed(2);
+
+  const averageSpeedKmh =
+    rideSeconds > 0
+      ? rideDistanceKm / (rideSeconds / 3600)
+      : 0;
   // ─────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.container}>
@@ -256,13 +685,12 @@ export default function Dashboard() {
           </View>
         </TouchableWithoutFeedback>
       </Modal>
-
       {/* Accident Alert Modal */}
       <Modal
         transparent
         visible={!!accidentAlert}
         animationType="slide"
-        onRequestClose={dismissAccident}
+        onRequestClose={() => { }}
       >
         <View style={styles.accidentOverlay}>
           <View style={styles.accidentCard}>
@@ -273,9 +701,7 @@ export default function Dashboard() {
                 color="#fff"
               />
             </View>
-
             <Text style={styles.accidentTitle}>ACCIDENT DETECTED</Text>
-
             <Text style={styles.accidentImpact}>
               Impact:{" "}
               {accidentAlert?.impact_g != null
@@ -283,52 +709,49 @@ export default function Dashboard() {
                 : "—"}{" "}
               g{accidentAlert?.tilted ? "  ·  Helmet tilted" : ""}
             </Text>
-
             <Text style={styles.accidentMsg}>
               {accidentAlert?.message || "Rider may need assistance!"}
             </Text>
-
-            {/* SMS sent notice */}
-            <View style={styles.smsSentBanner}>
-              <Feather name="message-square" size={14} color="#059669" />
-              <Text style={styles.smsSentText}>
-                SMS alert sent to emergency contacts
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              style={styles.accidentSOSBtn}
-              onPress={() => {
-                dismissAccident();
-                setSosVisible(true);
-              }}
-            >
-              <FontAwesome5
-                name="exclamation-triangle"
-                size={15}
-                color="#fff"
-              />
-              <Text style={styles.accidentSOSText}>Open Emergency SOS</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.accidentDismissBtn}
-              onPress={dismissAccident}
-            >
-              <Text style={styles.accidentDismissText}>
-                I am safe — dismiss
-              </Text>
-            </TouchableOpacity>
+            {accidentPhase === "countdown" ? (
+              <>
+                <Text style={styles.countdownNumber}>{countdown}s</Text>
+                <Text style={styles.countdownCaption}>
+                  Emergency simulation begins when the countdown ends.
+                </Text>
+                <TouchableOpacity style={styles.accidentSOSBtn} onPress={simulateSOS}>
+                  <Text style={styles.accidentSOSText}>Send SOS Now (Test)</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.accidentDismissBtn} onPress={dismissAccident}>
+                  <Text style={styles.accidentDismissText}>I'm Safe — Cancel</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Text style={styles.simulationNotice}>
+                  TEST: Emergency alert triggered. No SMS was sent and no call was placed.
+                </Text>
+                <TouchableOpacity
+                  style={styles.accidentSOSBtn}
+                  onPress={() => {
+                    dismissAccident();
+                    setSosVisible(true);
+                  }}
+                >
+                  <Text style={styles.accidentSOSText}>Open Emergency SOS Options</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.accidentDismissBtn} onPress={dismissAccident}>
+                  <Text style={styles.accidentDismissText}>Dismiss Alert</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </View>
       </Modal>
-
       {/* SOS Modal */}
       <EmergencySOSModal
         visible={sosVisible}
         onClose={() => setSosVisible(false)}
       />
-
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 100 }}
@@ -337,7 +760,7 @@ export default function Dashboard() {
         <View style={styles.header}>
           <View style={styles.headerTop}>
             <View>
-              <Text style={styles.greeting}>{getGreeting()}, Haroon 👋</Text>
+              <Text style={styles.greeting}>{getGreeting()}, 👋</Text>
               <Text style={styles.headerTitle}>Moto Safe Dashboard</Text>
             </View>
             <TouchableOpacity
@@ -347,7 +770,6 @@ export default function Dashboard() {
               <Feather name="more-vertical" size={20} color="#fff" />
             </TouchableOpacity>
           </View>
-
           <TouchableOpacity
             style={styles.connectionCard}
             onPress={() => router.push("/helmet-connect")}
@@ -382,14 +804,12 @@ export default function Dashboard() {
             <Ionicons name="chevron-forward" size={18} color="#fff" />
           </TouchableOpacity>
         </View>
-
         {/* Alert Banners */}
         <AlertBanner
           drowsinessStatus={drowsinessStatus}
           accidentStatus={accidentStatus}
           onDismissDrowsiness={dismissDrowsiness}
         />
-
         {/* Ride session */}
         <View style={styles.section}>
           <View style={styles.rideCard}>
@@ -417,8 +837,19 @@ export default function Dashboard() {
                 rideActive && styles.rideToggleBtnStop,
               ]}
               onPress={() => {
-                if (rideActive) setRideSeconds(0);
-                setRideActive(!rideActive);
+                if (rideActive) {
+                  // Stop the current ride.
+                  setRideActive(false);
+                  setCurrentSpeedKmh(0);
+                  previousRideLocationRef.current = null;
+                } else {
+                  // Start a completely new ride.
+                  setRideSeconds(0);
+                  setRideDistanceKm(0);
+                  setCurrentSpeedKmh(0);
+                  previousRideLocationRef.current = null;
+                  setRideActive(true);
+                }
               }}
             >
               <Feather
@@ -433,10 +864,69 @@ export default function Dashboard() {
           </View>
         </View>
 
+        {/* MotoSafe speed warning */}
+        {rideActive && speedAlertResult.shouldWarn && (
+          <View
+            style={{
+              marginHorizontal: 16,
+              marginBottom: 16,
+              padding: 14,
+              borderRadius: 12,
+              backgroundColor: "#FEF2F2",
+              borderWidth: 1,
+              borderColor: "#FECACA",
+              flexDirection: "row",
+              alignItems: "center",
+            }}
+          >
+            <Feather
+              name="alert-triangle"
+              size={22}
+              color="#DC2626"
+            />
+
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text
+                style={{
+                  fontSize: 15,
+                  fontWeight: "700",
+                  color: "#B91C1C",
+                }}
+              >
+                Speed Warning
+              </Text>
+
+              <Text
+                style={{
+                  fontSize: 13,
+                  color: "#991B1B",
+                  marginTop: 3,
+                }}
+              >
+                Reduce speed below{" "}
+                {speedDecision.effectiveSpeed} km/h.
+              </Text>
+
+              <Text
+                style={{
+                  fontSize: 11,
+                  color: "#7F1D1D",
+                  marginTop: 4,
+                }}
+              >
+                Source: {speedDecision.source === "fallback"
+                  ? "MotoSafe safety threshold"
+                  : speedDecision.source === "camera"
+                    ? "Camera detection"
+                    : "Map data"}
+              </Text>
+            </View>
+          </View>
+        )}
+
         {/* Monitoring */}
         <View style={[styles.section, { paddingTop: 0 }]}>
           <Text style={styles.sectionTitle}>Real-time safety monitoring</Text>
-
           {/* Drowsiness card */}
           <View style={styles.card}>
             <View
@@ -483,7 +973,6 @@ export default function Dashboard() {
             </View>
             <Ionicons name="chevron-forward" size={20} color="#d1d5db" />
           </View>
-
           {/* Accident card */}
           <View style={styles.card}>
             <View
@@ -498,11 +987,10 @@ export default function Dashboard() {
               <Text style={styles.cardTitle}>Accident monitoring</Text>
               <Text style={styles.cardSubtitle}>
                 {accidentAlert?.detected
-                  ? `Impact: ${
-                      accidentAlert.impact_g != null
-                        ? accidentAlert.impact_g.toFixed(1)
-                        : "—"
-                    }g${accidentAlert.tilted ? "  ·  Helmet tilted" : ""}`
+                  ? `Impact: ${accidentAlert.impact_g != null
+                    ? accidentAlert.impact_g.toFixed(1)
+                    : "—"
+                  }g${accidentAlert.tilted ? "  ·  Helmet tilted" : ""}`
                   : helmetConnected
                     ? `G-force: ${accelG.toFixed(2)}g  ·  Pitch: ${pitchDeg.toFixed(1)}°`
                     : "Impact detection active"}
@@ -537,7 +1025,6 @@ export default function Dashboard() {
             <Ionicons name="chevron-forward" size={20} color="#d1d5db" />
           </View>
         </View>
-
         {/* Stats */}
         <View style={styles.statsContainer}>
           <View style={styles.statCard}>
@@ -553,9 +1040,11 @@ export default function Dashboard() {
             <View style={styles.statIconRow}>
               <Feather name="activity" size={16} color="#6b7280" />
             </View>
-            <Text style={styles.statLabel}>Avg Speed</Text>
+            <Text style={styles.statLabel}>Current Speed</Text>
             <Text style={styles.statValue}>
-              {rideActive ? "52 km/h" : "— km/h"}
+              {rideActive
+                ? `${currentSpeedKmh.toFixed(1)} km/h`
+                : "— km/h"}
             </Text>
           </View>
           <View style={styles.statCard}>
@@ -579,7 +1068,6 @@ export default function Dashboard() {
             </Text>
           </View>
         </View>
-
         {/* SOS button */}
         <View style={styles.sosContainer}>
           <TouchableOpacity
@@ -591,7 +1079,6 @@ export default function Dashboard() {
           </TouchableOpacity>
         </View>
       </ScrollView>
-
       {/* Bottom nav */}
       <View style={styles.bottomNav}>
         <TouchableOpacity style={styles.navItem}>
@@ -634,7 +1121,6 @@ export default function Dashboard() {
     </SafeAreaView>
   );
 }
-
 // ─────────────────────────────────────────────────────────────
 // Styles — identical to original + smsSentBanner added
 // ─────────────────────────────────────────────────────────────
@@ -877,8 +1363,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 12,
   },
-
-  // NEW — SMS sent confirmation inside accident modal
+  // Accident simulation and countdown UI
   smsSentBanner: {
     flexDirection: "row",
     alignItems: "center",
@@ -893,7 +1378,9 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   smsSentText: { fontSize: 13, color: "#047857", fontWeight: "600", flex: 1 },
-
+  countdownNumber: { fontSize: 42, fontWeight: "800", color: "#dc2626", marginBottom: 4 },
+  countdownCaption: { fontSize: 12, color: "#6b7280", textAlign: "center", marginBottom: 16 },
+  simulationNotice: { fontSize: 13, color: "#92400e", textAlign: "center", marginBottom: 16 },
   accidentSOSBtn: {
     backgroundColor: "#ef4444",
     borderRadius: 14,
