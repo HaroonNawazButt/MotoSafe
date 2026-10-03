@@ -13,6 +13,7 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Alert,
   Modal,
   TouchableWithoutFeedback,
   Vibration,
@@ -916,6 +917,57 @@ export default function Dashboard() {
           </View>
         </View>
 
+        {/* Developer-only helmet communication test */}
+        {__DEV__ &&
+          helmetServiceStatus === HELMET_STATUS.SIMULATED && (
+            <View
+              style={{
+                marginHorizontal: 16,
+                marginBottom: 12,
+              }}
+            >
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Test simulated helmet warning"
+                style={{
+                  backgroundColor: "#F59E0B",
+                  paddingVertical: 12,
+                  borderRadius: 10,
+                  alignItems: "center",
+                }}
+                onPress={() => {
+                  const result = sendHelmetWarning(
+                    HELMET_COMMAND.SPEED_WARNING,
+                    {
+                      message: "Development test. Simulated speed warning.",
+                      currentSpeedKmh: 75,
+                      thresholdKmh: 60,
+                      source: "developer_test",
+                      busyRoadApplied: false,
+                    }
+                  );
+
+                  console.log("[MotoSafe Dashboard Test]", result);
+
+                  Alert.alert(
+                    "Helmet Communication Test",
+                    result.success && result.simulated && !result.delivered
+                      ? "PASS: Warning processed in simulation mode. Nothing was transmitted to physical hardware."
+                      : "FAIL: Helmet simulation did not process the warning."
+                  );
+                }}
+              >
+                <Text
+                  style={{
+                    color: "#111827",
+                    fontWeight: "700",
+                  }}
+                >
+                  Test Helmet Warning (DEV)
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
         {/* MotoSafe speed warning */}
         {rideActive && speedAlertResult.shouldWarn && (
           <View
