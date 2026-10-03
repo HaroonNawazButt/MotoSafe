@@ -10,9 +10,15 @@ import {
   createHelmetCommand,
 } from "./helmetProtocol.js";
 
+import {
+  establishHelmetWifiConnection,
+  sendMockWifiCommand,
+} from "./helmetWifiConnection.js";
+
 export const HELMET_STATUS = Object.freeze({
   DISCONNECTED: "disconnected",
   SIMULATED: "simulated",
+  MOCK_WIFI: "mock_wifi",
   CONNECTED: "connected",
 });
 
@@ -22,7 +28,8 @@ export const HELMET_MODE = Object.freeze({
 });
 
 let currentStatus = HELMET_STATUS.DISCONNECTED;
-
+let connectionGeneration = 0;
+let activeMockWifiAddress = null;
 const listeners = new Set();
 
 function notifyListeners() {
@@ -59,7 +66,9 @@ export function connectHelmet(mode = HELMET_MODE.SIMULATION) {
       message: "Real Wi-Fi communication is not implemented yet.",
     };
   }
-
+  // Invalidate any pending asynchronous Wi-Fi connection.
+  connectionGeneration++;
+  activeMockWifiAddress = null;
   currentStatus = HELMET_STATUS.SIMULATED;
   notifyListeners();
 
@@ -70,7 +79,57 @@ export function connectHelmet(mode = HELMET_MODE.SIMULATION) {
   };
 }
 
+
+/**
+ * Connect to the development mock ESP32 server.
+ *
+ * A successful mock handshake must never be represented
+ * as a verified physical helmet connection.
+ */
+
+export async function connectMockHelmetWifi(baseUrl) {
+  const generation = ++connectionGeneration;
+
+  const result = await establishHelmetWifiConnection(baseUrl);
+
+  // A newer connection attempt, simulation start, or disconnect
+  // invalidates this pending request.
+  if (generation !== connectionGeneration) {
+    return {
+      success: false,
+      status: currentStatus,
+      message: "Helmet connection attempt was cancelled or superseded.",
+    };
+  }
+
+  if (!result.success || !result.connected) {
+    return {
+      success: false,
+      status: currentStatus,
+      message: result.message,
+    };
+  }
+
+  activeMockWifiAddress = baseUrl;
+  currentStatus = HELMET_STATUS.MOCK_WIFI;
+  notifyListeners();
+
+  return {
+    success: true,
+    status: currentStatus,
+    simulated: true,
+    physicalDevice: false,
+    device: result.device,
+    message:
+      "Mock Wi-Fi connection established. No physical helmet is connected.",
+  };
+}
+
+
 export function disconnectHelmet() {
+  // Cancel any pending asynchronous connection attempt.
+  connectionGeneration++;
+  activeMockWifiAddress = null;
   currentStatus = HELMET_STATUS.DISCONNECTED;
   notifyListeners();
 
@@ -105,4 +164,53 @@ export function sendHelmetWarning(type, payload = {}) {
     command,
     message: "Command simulated. Nothing was transmitted to hardware.",
   };
+}
+
+/**
+ * Send a warning through the active development mock Wi-Fi connection.
+ *
+ * This function is asynchronous and separate from the existing
+ * synchronous simulation warning function.
+ *
+ * A mock acknowledgement never represents physical speaker delivery.
+ */
+export async function sendMockHelmetWifiWarning(type, payload = {}) {
+  // Validate the command before attempting transmission.
+  createHelmetCommand(type, payload);
+
+  if (
+    currentStatus !== HELMET_STATUS.MOCK_WIFI ||
+    !activeMockWifiAddress
+  ) {
+    return {
+      success: false,
+      accepted: false,
+      delivered: false,
+      simulated: true,
+      message: "No active mock Wi-Fi helmet connection.",
+    };
+  }
+
+  // Capture the connection identity before the asynchronous request.
+  const generation = connectionGeneration;
+  const address = activeMockWifiAddress;
+
+  const result = await sendMockWifiCommand(address, type, payload);
+
+  // Reject results belonging to an old connection.
+  if (
+    generation !== connectionGeneration ||
+    currentStatus !== HELMET_STATUS.MOCK_WIFI ||
+    activeMockWifiAddress !== address
+  ) {
+    return {
+      success: false,
+      accepted: false,
+      delivered: false,
+      simulated: true,
+      message: "Warning result discarded: helmet connection changed.",
+    };
+  }
+
+  return result;
 }

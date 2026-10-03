@@ -1,7 +1,11 @@
-
 import {
     checkHelmetConnection,
+    transmitHelmetCommand,
 } from "./helmetWifiTransport.js";
+
+import {
+    createHelmetCommand,
+} from "./helmetProtocol.js";
 
 import {
     validateHelmetStatusResponse,
@@ -36,6 +40,57 @@ export async function establishHelmetWifiConnection(baseUrl) {
         return {
             success: false,
             connected: false,
+            message: error.message,
+        };
+    }
+}
+
+/**
+ * Send a structured warning to the development mock ESP32.
+ *
+ * An HTTP acknowledgement does not mean physical delivery.
+ */
+export async function sendMockWifiCommand(baseUrl, type, payload = {}) {
+    const command = createHelmetCommand(type, payload);
+
+    try {
+        const response = await transmitHelmetCommand(baseUrl, command);
+
+        const accepted =
+            response !== null &&
+            typeof response === "object" &&
+            !Array.isArray(response) &&
+            response.success === true &&
+            response.accepted === true &&
+            response.simulated === true &&
+            response.delivered === false &&
+            response.commandType === command.type;
+
+        if (!accepted) {
+            return {
+                success: false,
+                accepted: false,
+                delivered: false,
+                simulated: true,
+                message: "Mock helmet acknowledgement validation failed.",
+            };
+        }
+
+        return {
+            success: true,
+            accepted: true,
+            delivered: false,
+            simulated: true,
+            command,
+            message:
+                "Mock ESP32 accepted the command. No physical delivery occurred.",
+        };
+    } catch (error) {
+        return {
+            success: false,
+            accepted: false,
+            delivered: false,
+            simulated: true,
             message: error.message,
         };
     }
