@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 
 import {
   View,
@@ -11,6 +11,14 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useRouter } from "expo-router";
+import {
+  HELMET_MODE,
+  HELMET_STATUS,
+  getHelmetStatus,
+  subscribeHelmetStatus,
+  connectHelmet,
+  disconnectHelmet,
+} from "../services/helmet/helmetService";
 
 import {
   Feather,
@@ -20,60 +28,38 @@ import {
 
 export default function HelmetConnectPage() {
   const router = useRouter();
+  const [helmetStatus, setHelmetStatus] = useState(
+    getHelmetStatus()
+  );
 
-  const [isScanning, setIsScanning] =
-    useState(false);
+  useEffect(() => {
+    const unsubscribe = subscribeHelmetStatus(setHelmetStatus);
 
-  const [showDevices, setShowDevices] =
-    useState(false);
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
-  const [connectedDevice, setConnectedDevice] =
-    useState(null);
+  const handleStartSimulation = () => {
+    const result = connectHelmet(HELMET_MODE.SIMULATION);
 
-  const devices = [
-    {
-      id: 1,
-      name: "MotoSafe Pro X1",
-      signal: "Strong",
-      signalColor: "#10b981",
-      connectable: true,
-    },
-
-    {
-      id: 2,
-      name: "MotoSafe Lite",
-      signal: "Medium",
-      signalColor: "#f59e0b",
-      connectable: true,
-    },
-
-    {
-      id: 3,
-      name: "BT Device 4F:A2",
-      signal: "Weak",
-      signalColor: "#ef4444",
-      connectable: false,
-    },
-  ];
-
-  const startScanning = () => {
-    setIsScanning(true);
-    setShowDevices(false);
-
-    setTimeout(() => {
-      setIsScanning(false);
-      setShowDevices(true);
-    }, 1500);
-  };
-
-  const connectDevice = (device) => {
-    if (!device.connectable) return;
-
-    setConnectedDevice(device.name);
+    if (!result.success) {
+      Alert.alert("Simulation Failed", result.message);
+      return;
+    }
 
     Alert.alert(
-      "Helmet Connected",
-      `${device.name} connected successfully!`
+      "Simulation Started",
+      "Development mode is active. No physical helmet is connected."
+    );
+  };
+
+  const handleDisconnect = () => {
+    disconnectHelmet();
+
+    Alert.alert(
+      "Simulation Stopped",
+      "Helmet simulation has been disconnected."
     );
   };
 
@@ -124,7 +110,7 @@ export default function HelmetConnectPage() {
             {/* Bluetooth Button */}
             <View style={styles.bluetoothButton}>
               <MaterialCommunityIcons
-                name="bluetooth"
+                name="wifi"
                 size={26}
                 color="#fff"
               />
@@ -132,149 +118,55 @@ export default function HelmetConnectPage() {
           </View>
 
           <Text style={styles.heroText}>
-            Make sure Bluetooth is enabled on
-            your device
+            Helmet Communication Testing
           </Text>
         </View>
 
-        {/* Scan Button */}
+        {/* Development Simulation Control */}
         <View style={styles.scanContainer}>
           <TouchableOpacity
             style={[
               styles.scanButton,
-              isScanning && {
-                opacity: 0.7,
+              helmetStatus === HELMET_STATUS.SIMULATED && {
+                backgroundColor: "#6b7280",
               },
             ]}
-            onPress={startScanning}
-            disabled={isScanning}
+            onPress={handleStartSimulation}
+            disabled={helmetStatus === HELMET_STATUS.SIMULATED}
           >
             <Feather
-              name="search"
+              name="monitor"
               size={18}
               color="#fff"
             />
 
             <Text style={styles.scanButtonText}>
-              {isScanning
-                ? "Scanning..."
-                : "Scan for helmet devices"}
+              {helmetStatus === HELMET_STATUS.SIMULATED
+                ? "Simulation Running"
+                : "Start Helmet Simulation"}
             </Text>
           </TouchableOpacity>
+
+          <Text
+            style={{
+              color: "#6b7280",
+              fontSize: 12,
+              textAlign: "center",
+              marginTop: 10,
+              lineHeight: 18,
+            }}
+          >
+            Developer testing only. This does not scan for or connect
+            to physical helmet hardware.
+          </Text>
         </View>
 
-        {/* Device List */}
-        {showDevices && (
-          <View style={styles.devicesContainer}>
-            <Text style={styles.devicesTitle}>
-              Available devices
-            </Text>
-
-            {devices.map((device) => (
-              <View
-                key={device.id}
-                style={styles.deviceCard}
-              >
-                <View
-                  style={[
-                    styles.deviceIcon,
-                    {
-                      backgroundColor:
-                        device.connectable
-                          ? "rgba(37,99,235,0.1)"
-                          : "rgba(107,114,128,0.1)",
-                    },
-                  ]}
-                >
-                  <MaterialCommunityIcons
-                    name="motorbike"
-                    size={28}
-                    color={
-                      device.connectable
-                        ? "#2563eb"
-                        : "#6b7280"
-                    }
-                  />
-                </View>
-
-                <View style={{ flex: 1 }}>
-                  <View
-                    style={styles.deviceNameRow}
-                  >
-                    <Text
-                      style={[
-                        styles.deviceName,
-                        !device.connectable && {
-                          color: "#6b7280",
-                        },
-                      ]}
-                    >
-                      {device.name}
-                    </Text>
-
-                    <View
-                      style={[
-                        styles.signalDot,
-                        {
-                          backgroundColor:
-                            device.signalColor,
-                        },
-                      ]}
-                    />
-                  </View>
-
-                  <Text
-                    style={styles.signalText}
-                  >
-                    Signal strength:{" "}
-                    {device.signal}
-                  </Text>
-                </View>
-
-                <TouchableOpacity
-                  style={[
-                    styles.connectButton,
-                    !device.connectable && {
-                      backgroundColor:
-                        "#e5e7eb",
-                    },
-
-                    connectedDevice ===
-                      device.name && {
-                      backgroundColor:
-                        "#10b981",
-                    },
-                  ]}
-                  disabled={!device.connectable}
-                  onPress={() =>
-                    connectDevice(device)
-                  }
-                >
-                  <Text
-                    style={[
-                      styles.connectButtonText,
-                      !device.connectable && {
-                        color: "#9ca3af",
-                      },
-                    ]}
-                  >
-                    {connectedDevice ===
-                    device.name
-                      ? "Connected"
-                      : "Connect"}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            ))}
-          </View>
-        )}
-
         {/* Status Banner */}
-        {connectedDevice && (
+        {helmetStatus === HELMET_STATUS.SIMULATED && (
           <View style={styles.statusBanner}>
             <View style={styles.statusIcon}>
               <Feather
-                name="check"
+                name="monitor"
                 size={18}
                 color="#fff"
               />
@@ -282,17 +174,32 @@ export default function HelmetConnectPage() {
 
             <View style={{ flex: 1 }}>
               <Text style={styles.statusTitle}>
-                Connected to{" "}
-                {connectedDevice}
+                Helmet Simulation Active
               </Text>
 
-              <Text
-                style={styles.statusSubtitle}
-              >
-                Your helmet is ready to use
+              <Text style={styles.statusSubtitle}>
+                Development mode only. No physical helmet is connected.
               </Text>
             </View>
           </View>
+        )}
+
+        {/* Simulation Disconnect Button */}
+        {helmetStatus === HELMET_STATUS.SIMULATED && (
+          <TouchableOpacity
+            style={styles.disconnectButton}
+            onPress={handleDisconnect}
+          >
+            <Feather
+              name="power"
+              size={18}
+              color="#dc2626"
+            />
+
+            <Text style={styles.disconnectButtonText}>
+              Stop Helmet Simulation
+            </Text>
+          </TouchableOpacity>
         )}
 
         {/* Info Card */}
@@ -305,9 +212,9 @@ export default function HelmetConnectPage() {
           />
 
           <Text style={styles.infoText}>
-            Make sure your helmet is powered
-            on and within range. The LED
-            indicator should be blinking blue.
+            Simulation mode allows developers to test MotoSafe
+            without physical helmet hardware. Real ESP32 Wi-Fi
+            communication will be enabled after hardware integration.
           </Text>
         </View>
       </ScrollView>
@@ -533,6 +440,26 @@ const styles = StyleSheet.create({
   statusSubtitle: {
     color: "#059669",
     fontSize: 12,
+  },
+
+  disconnectButton: {
+    marginHorizontal: 20,
+    marginTop: 12,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#fecaca",
+    backgroundColor: "#fef2f2",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+  },
+
+  disconnectButtonText: {
+    color: "#dc2626",
+    fontSize: 14,
+    fontWeight: "700",
   },
 
   infoCard: {

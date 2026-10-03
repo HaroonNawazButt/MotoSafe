@@ -49,6 +49,17 @@ import {
   shouldRearmSpeedWarning,
 } from "../utils/speedAlertCooldown";
 
+import {
+  HELMET_STATUS,
+  getHelmetStatus,
+  subscribeHelmetStatus,
+  sendHelmetWarning,
+} from "../services/helmet/helmetService";
+
+import {
+  HELMET_COMMAND,
+} from "../services/helmet/helmetProtocol";
+
 console.log(
   "[MotoSafe NATIVE] NativeSMS available:",
   !!NativeModules.NativeSMS
@@ -115,6 +126,7 @@ export default function Dashboard() {
   const [sosVisible, setSosVisible] = useState(false);
   const [helmetConnected, setHelmetConnected] = useState(false);
   const [helmetBattery, setHelmetBattery] = useState(null);
+  const [helmetServiceStatus, setHelmetServiceStatus] = useState(getHelmetStatus());
   const [accelG, setAccelG] = useState(0);
   const [pitchDeg, setPitchDeg] = useState(0);
   const [drowsyLevel, setDrowsyLevel] = useState(0);
@@ -324,6 +336,17 @@ export default function Dashboard() {
         : 0;
   const accidentStatus = accidentAlert?.detected === true ? 2 : 0;
   const safetyScore = calcSafetyScore(drowsinessStatus, accidentStatus);
+  // Helmet Communication Service status.
+  // Independent of the legacy Firebase sensor status.
+  useEffect(() => {
+    setHelmetServiceStatus(getHelmetStatus());
+
+    const unsubscribe = subscribeHelmetStatus((status) => {
+      setHelmetServiceStatus(status);
+    });
+
+    return unsubscribe;
+  }, []);
   // ── Firebase listeners ──────────────────────────────────────
   useEffect(() => {
     // 1. Helmet status
@@ -516,9 +539,25 @@ export default function Dashboard() {
         reason: result.reason,
       });
 
-      // Future integration:
-      // Send this event to the helmet speaker interface.
-      // No audio or hardware command is sent at this stage.
+      // Forward the approved warning event to the Helmet Service.
+      // The service currently supports simulation only.
+      const helmetResult = sendHelmetWarning(
+        HELMET_COMMAND.SPEED_WARNING,
+        {
+          message,
+          currentSpeedKmh: Number(currentSpeedKmh.toFixed(1)),
+          thresholdKmh: speedDecision.effectiveSpeed,
+          source: speedDecision.source,
+          busyRoadApplied: speedDecision.busyRoadApplied,
+        }
+      );
+
+      if (!helmetResult.success) {
+        console.log(
+          "[MotoSafe Helmet]",
+          "Warning was not sent: no active helmet connection."
+        );
+      }
     }
   }, [
     rideActive,
@@ -784,21 +823,34 @@ export default function Dashboard() {
             <View style={{ flex: 1 }}>
               <View style={styles.connectionRow}>
                 <Text style={styles.connectionTitle}>
-                  {helmetConnected ? "MotoSafe Pro X1" : "No helmet connected"}
+                  {helmetServiceStatus === HELMET_STATUS.SIMULATED
+                    ? "Helmet Simulation Active"
+                    : helmetServiceStatus === HELMET_STATUS.CONNECTED
+                      ? "MotoSafe Helmet Connected"
+                      : "No helmet connected"}
                 </Text>
+
                 <View
                   style={[
                     styles.statusIndicatorDot,
                     {
-                      backgroundColor: helmetConnected ? "#10b981" : "#9ca3af",
+                      backgroundColor:
+                        helmetServiceStatus === HELMET_STATUS.SIMULATED
+                          ? "#f59e0b"
+                          : helmetServiceStatus === HELMET_STATUS.CONNECTED
+                            ? "#10b981"
+                            : "#9ca3af",
                     },
                   ]}
                 />
               </View>
+
               <Text style={styles.connectionSubtitle}>
-                {helmetConnected
-                  ? `Connected · Battery ${helmetBattery ?? "—"}%`
-                  : "Tap to connect your helmet"}
+                {helmetServiceStatus === HELMET_STATUS.SIMULATED
+                  ? "Development simulation · No physical helmet"
+                  : helmetServiceStatus === HELMET_STATUS.CONNECTED
+                    ? "Helmet communication connected"
+                    : "Tap to connect your helmet"}
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color="#fff" />
