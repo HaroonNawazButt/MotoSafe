@@ -1,6 +1,7 @@
 import {
     checkHelmetConnection,
     transmitHelmetCommand,
+    fetchHelmetEvents,
 } from "./helmetWifiTransport.js";
 
 import {
@@ -9,6 +10,7 @@ import {
 
 import {
     validateHelmetStatusResponse,
+    validateHelmetEventsResponse,
 } from "./helmetWifiValidation.js";
 
 /**
@@ -91,6 +93,38 @@ export async function sendMockWifiCommand(baseUrl, type, payload = {}) {
             accepted: false,
             delivered: false,
             simulated: true,
+            message: error.message,
+        };
+    }
+}
+
+/**
+ * Fetch and validate events exposed by the mock helmet.
+ *
+ * This function only retrieves validated events.
+ * It does not trigger emergency actions.
+ */
+export async function receiveMockWifiEvents(baseUrl) {
+    try {
+        const response = await fetchHelmetEvents(baseUrl);
+
+        if (!validateHelmetEventsResponse(response)) {
+            return {
+                success: false,
+                events: [],
+                message: "Mock helmet event validation failed.",
+            };
+        }
+
+        return {
+            success: true,
+            events: response.events,
+            message: "Mock helmet events received successfully.",
+        };
+    } catch (error) {
+        return {
+            success: false,
+            events: [],
             message: error.message,
         };
     }

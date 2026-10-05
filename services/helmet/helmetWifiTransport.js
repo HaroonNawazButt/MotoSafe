@@ -92,3 +92,9 @@ export async function transmitHelmetCommand(baseUrl, command) {
     body: JSON.stringify(command),
   });
 }
+
+export async function fetchHelmetEvents(baseUrl) {
+  return requestHelmet(baseUrl, "/events", {
+    method: "GET",
+  });
+}

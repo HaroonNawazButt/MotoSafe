@@ -13,6 +13,7 @@ import {
 import {
   establishHelmetWifiConnection,
   sendMockWifiCommand,
+  receiveMockWifiEvents,
 } from "./helmetWifiConnection.js";
 
 export const HELMET_STATUS = Object.freeze({
@@ -30,6 +31,7 @@ export const HELMET_MODE = Object.freeze({
 let currentStatus = HELMET_STATUS.DISCONNECTED;
 let connectionGeneration = 0;
 let activeMockWifiAddress = null;
+const processedMockEventIds = new Set();
 const listeners = new Set();
 
 function notifyListeners() {
@@ -69,6 +71,7 @@ export function connectHelmet(mode = HELMET_MODE.SIMULATION) {
   // Invalidate any pending asynchronous Wi-Fi connection.
   connectionGeneration++;
   activeMockWifiAddress = null;
+  processedMockEventIds.clear();
   currentStatus = HELMET_STATUS.SIMULATED;
   notifyListeners();
 
@@ -109,7 +112,7 @@ export async function connectMockHelmetWifi(baseUrl) {
       message: result.message,
     };
   }
-
+  processedMockEventIds.clear();
   activeMockWifiAddress = baseUrl;
   currentStatus = HELMET_STATUS.MOCK_WIFI;
   notifyListeners();
@@ -130,6 +133,7 @@ export function disconnectHelmet() {
   // Cancel any pending asynchronous connection attempt.
   connectionGeneration++;
   activeMockWifiAddress = null;
+  processedMockEventIds.clear();
   currentStatus = HELMET_STATUS.DISCONNECTED;
   notifyListeners();
 
@@ -213,4 +217,67 @@ export async function sendMockHelmetWifiWarning(type, payload = {}) {
   }
 
   return result;
+}
+
+/**
+ * Receive new events from the active development mock Wi-Fi connection.
+ *
+ * Events already processed during the current connection session
+ * are filtered by event ID.
+ *
+ * This function does not trigger emergency actions.
+ */
+export async function receiveMockHelmetWifiEvents() {
+  if (
+    currentStatus !== HELMET_STATUS.MOCK_WIFI ||
+    !activeMockWifiAddress
+  ) {
+    return {
+      success: false,
+      events: [],
+      message: "No active mock Wi-Fi helmet connection.",
+    };
+  }
+
+  // Capture the current connection identity before the async request.
+  const generation = connectionGeneration;
+  const address = activeMockWifiAddress;
+
+  const result = await receiveMockWifiEvents(address);
+
+  // Discard results belonging to an old or changed connection.
+  if (
+    generation !== connectionGeneration ||
+    currentStatus !== HELMET_STATUS.MOCK_WIFI ||
+    activeMockWifiAddress !== address
+  ) {
+    return {
+      success: false,
+      events: [],
+      message: "Event result discarded: helmet connection changed.",
+    };
+  }
+
+  if (!result.success) {
+    return result;
+  }
+
+  const newEvents = result.events.filter(
+    (event) => !processedMockEventIds.has(event.id)
+  );
+
+  newEvents.forEach((event) => {
+    processedMockEventIds.add(event.id);
+  });
+
+  return {
+    success: true,
+    events: newEvents,
+    receivedCount: result.events.length,
+    newCount: newEvents.length,
+    message:
+      newEvents.length > 0
+        ? "New mock helmet events received."
+        : "No new mock helmet events.",
+  };
 }

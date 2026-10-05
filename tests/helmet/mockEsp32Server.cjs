@@ -17,6 +17,24 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    if (req.method === "GET" && req.url === "/events") {
+        res.writeHead(200);
+        res.end(
+            JSON.stringify({
+                events: [
+                    {
+                        id: "mock-event-001",
+                        version: 1,
+                        type: "ACCIDENT_DETECTED",
+                        payload: {
+                            source: "mock_helmet",
+                        },
+                    },
+                ],
+            })
+        );
+        return;
+    }
     if (req.method === "POST" && req.url === "/command") {
         let body = "";
 
