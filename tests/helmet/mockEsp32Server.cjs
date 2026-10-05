@@ -53,8 +53,8 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ error: "Endpoint not found" }));
 });
 
-server.listen(PORT, "127.0.0.1", () => {
+server.listen(PORT, "0.0.0.0", () => {
     console.log(
-        `[MOCK ESP32] Running at http://127.0.0.1:${PORT}`
+        `[MOCK ESP32] Listening on all IPv4 interfaces at port ${PORT}`
     );
 });

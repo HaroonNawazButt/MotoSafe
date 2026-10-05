@@ -6,6 +6,8 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  TextInput,
+  ActivityIndicator,
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -17,8 +19,14 @@ import {
   getHelmetStatus,
   subscribeHelmetStatus,
   connectHelmet,
+  connectMockHelmetWifi,
+  sendMockHelmetWifiWarning,
   disconnectHelmet,
 } from "../services/helmet/helmetService";
+
+import {
+  HELMET_COMMAND,
+} from "../services/helmet/helmetProtocol";
 
 import {
   Feather,
@@ -31,6 +39,9 @@ export default function HelmetConnectPage() {
   const [helmetStatus, setHelmetStatus] = useState(
     getHelmetStatus()
   );
+  // Development mock Wi-Fi connection state.
+  const [mockWifiAddress, setMockWifiAddress] = useState("");
+  const [isMockConnecting, setIsMockConnecting] = useState(false);
 
   useEffect(() => {
     const unsubscribe = subscribeHelmetStatus(setHelmetStatus);
@@ -54,14 +65,104 @@ export default function HelmetConnectPage() {
     );
   };
 
+  const handleTestMockWifiWarning = async () => {
+    if (helmetStatus !== HELMET_STATUS.MOCK_WIFI) {
+      Alert.alert(
+        "Mock Wi-Fi Required",
+        "Connect to the mock ESP32 server before sending a test warning."
+      );
+      return;
+    }
+
+    try {
+      const result = await sendMockHelmetWifiWarning(
+        HELMET_COMMAND.SPEED_WARNING,
+        {
+          message: "Reduce speed.",
+          currentSpeedKmh: 75,
+          thresholdKmh: 60,
+          source: "phone_mock_wifi_test",
+          busyRoadApplied: false,
+        }
+      );
+
+      if (!result.success || !result.accepted) {
+        Alert.alert(
+          "Warning Test Failed",
+          result.message || "The mock server did not accept the warning."
+        );
+        return;
+      }
+
+      Alert.alert(
+        "Mock Warning Accepted",
+        "The development mock server accepted the SPEED_WARNING command. No physical speaker delivery occurred."
+      );
+    } catch (error) {
+      Alert.alert(
+        "Warning Test Error",
+        error?.message || "An unexpected warning test error occurred."
+      );
+    }
+  };
+
   const handleDisconnect = () => {
+    const previousStatus = helmetStatus;
+
     disconnectHelmet();
+
+    if (previousStatus === HELMET_STATUS.MOCK_WIFI) {
+      Alert.alert(
+        "Mock Wi-Fi Disconnected",
+        "The development mock server has been disconnected."
+      );
+      return;
+    }
 
     Alert.alert(
       "Simulation Stopped",
       "Helmet simulation has been disconnected."
     );
   };
+
+
+  const handleConnectMockWifi = async () => {
+    if (isMockConnecting) return;
+
+    const address = mockWifiAddress.trim();
+
+    if (!address) {
+      Alert.alert(
+        "Address Required",
+        "Enter the mock ESP32 server address first."
+      );
+      return;
+    }
+
+    setIsMockConnecting(true);
+
+    try {
+      const result = await connectMockHelmetWifi(address);
+
+      if (!result.success) {
+        Alert.alert("Mock Connection Failed", result.message);
+        return;
+      }
+
+      Alert.alert(
+        "Mock Wi-Fi Connected",
+        "Connected to the development mock server. No physical helmet is connected."
+      );
+    } catch (error) {
+      Alert.alert(
+        "Connection Error",
+        error?.message || "An unexpected connection error occurred."
+      );
+    } finally {
+      setIsMockConnecting(false);
+    }
+  };
+
 
   return (
     <SafeAreaView style={styles.container}>
@@ -160,6 +261,144 @@ export default function HelmetConnectPage() {
             to physical helmet hardware.
           </Text>
         </View>
+
+
+        {/* Development Mock Wi-Fi Connection */}
+        <View style={styles.scanContainer}>
+          <Text
+            style={{
+              fontSize: 16,
+              fontWeight: "700",
+              color: "#111827",
+              marginBottom: 10,
+            }}
+          >
+            Mock ESP32 Wi-Fi Testing
+          </Text>
+
+          <TextInput
+            style={{
+              borderWidth: 1,
+              borderColor: "#d1d5db",
+              borderRadius: 10,
+              paddingHorizontal: 14,
+              paddingVertical: 12,
+              fontSize: 14,
+              color: "#111827",
+              marginBottom: 12,
+            }}
+            placeholder="http://192.168.x.x:8765"
+            placeholderTextColor="#9ca3af"
+            value={mockWifiAddress}
+            onChangeText={setMockWifiAddress}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            editable={!isMockConnecting}
+          />
+
+          <TouchableOpacity
+            style={[
+              styles.scanButton,
+              (isMockConnecting ||
+                helmetStatus === HELMET_STATUS.MOCK_WIFI) && {
+                backgroundColor: "#6b7280",
+              },
+            ]}
+            onPress={handleConnectMockWifi}
+            disabled={
+              isMockConnecting ||
+              helmetStatus === HELMET_STATUS.MOCK_WIFI
+            }
+          >
+            {isMockConnecting ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Feather name="wifi" size={18} color="#fff" />
+            )}
+
+            <Text style={styles.scanButtonText}>
+              {isMockConnecting
+                ? "Connecting..."
+                : helmetStatus === HELMET_STATUS.MOCK_WIFI
+                  ? "Mock Wi-Fi Connected"
+                  : "Connect Mock ESP32"}
+            </Text>
+          </TouchableOpacity>
+
+          <Text
+            style={{
+              color: "#6b7280",
+              fontSize: 12,
+              textAlign: "center",
+              marginTop: 10,
+              lineHeight: 18,
+            }}
+          >
+            Development server only. This does not establish a
+            physical ESP32-CAM connection or verify speaker delivery.
+          </Text>
+        </View>
+
+        {/* Mock Wi-Fi Status Banner */}
+        {helmetStatus === HELMET_STATUS.MOCK_WIFI && (
+          <View style={styles.statusBanner}>
+            <View style={styles.statusIcon}>
+              <Feather
+                name="wifi"
+                size={18}
+                color="#fff"
+              />
+            </View>
+
+            <View style={{ flex: 1 }}>
+              <Text style={styles.statusTitle}>
+                Mock Wi-Fi Connected
+              </Text>
+
+              <Text style={styles.statusSubtitle}>
+                Development server connected. No physical helmet or
+                speaker delivery has been verified.
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* Mock Wi-Fi Warning Test */}
+        {helmetStatus === HELMET_STATUS.MOCK_WIFI && (
+          <TouchableOpacity
+            style={styles.scanButton}
+            onPress={handleTestMockWifiWarning}
+          >
+            <Feather
+              name="alert-triangle"
+              size={18}
+              color="#fff"
+            />
+
+            <Text style={styles.scanButtonText}>
+              Test Mock Speed Warning
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Mock Wi-Fi Disconnect Button */}
+        {helmetStatus === HELMET_STATUS.MOCK_WIFI && (
+          <TouchableOpacity
+            style={styles.disconnectButton}
+            onPress={handleDisconnect}
+          >
+            <Feather
+              name="power"
+              size={18}
+              color="#dc2626"
+            />
+
+            <Text style={styles.disconnectButtonText}>
+              Disconnect Mock Wi-Fi
+            </Text>
+          </TouchableOpacity>
+        )}
 
         {/* Status Banner */}
         {helmetStatus === HELMET_STATUS.SIMULATED && (
