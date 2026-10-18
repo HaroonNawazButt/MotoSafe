@@ -20,7 +20,7 @@ import {
 } from "react-native";
 
 import { useRouter } from "expo-router";
-import * as Contacts from "expo-contacts";
+import * as Contacts from "expo-contacts/legacy";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";

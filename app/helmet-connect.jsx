@@ -115,7 +115,7 @@ export default function HelmetConnectPage() {
             {/* Helmet Circle */}
             <View style={styles.helmetCircle}>
               <MaterialCommunityIcons
-                name="motorbike-helmet"
+                name="racing-helmet"
                 size={72}
                 color="#2563eb"
               />
@@ -187,7 +187,7 @@ export default function HelmetConnectPage() {
                   ]}
                 >
                   <MaterialCommunityIcons
-                    name="motorbike-helmet"
+                    name="racing-helmet"
                     size={28}
                     color={
                       device.connectable

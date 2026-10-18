@@ -354,7 +354,7 @@ export default function Dashboard() {
           >
             <View style={styles.helmetIconBox}>
               <MaterialCommunityIcons
-                name="motorbike-helmet"
+                name="racing-helmet"
                 size={24}
                 color="#2563eb"
               />

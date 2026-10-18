@@ -53,7 +53,7 @@ export default function SignupPage() {
         <View style={styles.heroSection}>
           <View style={styles.logoContainer}>
             <MaterialCommunityIcons
-              name="motorbike-helmet"
+              name="racing-helmet"
               size={56}
               color="#fff"
             />
