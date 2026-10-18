@@ -25,16 +25,16 @@ import {
   FontAwesome5,
 } from "@expo/vector-icons";
 
-import AlertBanner from "./dashboard-components/AlertBanner";
-import EmergencySOSModal from "./dashboard-components/EmergencySOSModal";
+import AlertBanner from "../components/dashboard/AlertBanner";
+import EmergencySOSModal from "../components/dashboard/EmergencySOSModal";
 
 // ── Firebase ──────────────────────────────────────────────────
-import { db } from "./firebaseConfig";
+import { db } from "../config/firebaseConfig";
 import { ref, onValue, set } from "firebase/database";
 
 // ── SMS + Storage (NEW) ───────────────────────────────────────
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { sendAccidentSMS } from "./utils/smsHelper";
+import { sendAccidentSMS } from "../utils/smsHelper";
 
 const STORAGE_KEY = "motosafe_emergency_contacts";
 

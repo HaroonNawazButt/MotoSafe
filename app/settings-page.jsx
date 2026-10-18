@@ -16,14 +16,14 @@ import {
 } from "@expo/vector-icons";
 
 // ── Child modals (place these in components/settings/) ──
-import ProfileEditModal from "./settings-components/ProfileEditModal";
-import SecurityModal from "./settings-components/SecurityModal";
-import HelmetDeviceModal from "./settings-components/HelmetDeviceModal";
-import CalibrationModal from "./settings-components/CalibrationModal";
-import NotificationSettingsModal from "./settings-components/NotificationSettingsModal";
-import LanguageModal from "./settings-components/LanguageModal";
-import PrivacyModal from "./settings-components/PrivacyModal";
-import HelpSupportModal from "./settings-components/HelpSupportModal";
+import ProfileEditModal from "../components/settings/ProfileEditModal";
+import SecurityModal from "../components/settings/SecurityModal";
+import HelmetDeviceModal from "../components/settings/HelmetDeviceModal";
+import CalibrationModal from "../components/settings/CalibrationModal";
+import NotificationSettingsModal from "../components/settings/NotificationSettingsModal";
+import LanguageModal from "../components/settings/LanguageModal";
+import PrivacyModal from "../components/settings/PrivacyModal";
+import HelpSupportModal from "../components/settings/HelpSupportModal";
 
 export default function SettingsPage() {
   const router = useRouter();
