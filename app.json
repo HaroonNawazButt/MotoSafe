@@ -22,7 +22,11 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.haroon.motosafe"
+      "package": "com.haroon.motosafe",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -31,7 +35,14 @@
     "plugins": [
       "expo-router",
       "expo-status-bar",
-      "expo-audio"
+      "expo-audio",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "MotoSafe uses your location for navigation and to share it with your emergency contacts.",
+          "locationWhenInUsePermission": "MotoSafe uses your location for navigation and to share it with your emergency contacts."
+        }
+      ]
     ],
     "extra": {
       "router": {},
