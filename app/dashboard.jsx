@@ -1406,7 +1406,7 @@ const styles = StyleSheet.create({
   sosText: { color: "#fff", fontSize: 16, fontWeight: "700" },
   bottomNav: {
     position: "absolute",
-    bottom: 0,
+    bottom: 18,
     left: 0,
     right: 0,
     backgroundColor: "#fff",

@@ -656,7 +656,7 @@ const styles = StyleSheet.create({
 
   bottomNav: {
     position: "absolute",
-    bottom: 0,
+    bottom: 18,
     left: 0,
     right: 0,
     backgroundColor: "#fff",

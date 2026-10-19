@@ -210,12 +210,12 @@ export default function ContactsPage() {
     const updated = contacts.map((c) =>
       c.id === editingContact.id
         ? {
-            ...c,
-            name: editName.trim(),
-            phone: editPhone.trim(),
-            relation: editRelation,
-            initials: getInitials(editName.trim()),
-          }
+          ...c,
+          name: editName.trim(),
+          phone: editPhone.trim(),
+          relation: editRelation,
+          initials: getInitials(editName.trim()),
+        }
         : c,
     );
     saveContacts(updated);
@@ -257,11 +257,11 @@ export default function ContactsPage() {
   // ── Filter ────────────────────────────────────────────────
   const filtered = searchQuery.trim()
     ? contacts.filter(
-        (c) =>
-          c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          c.phone.includes(searchQuery) ||
-          c.relation.toLowerCase().includes(searchQuery.toLowerCase()),
-      )
+      (c) =>
+        c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.phone.includes(searchQuery) ||
+        c.relation.toLowerCase().includes(searchQuery.toLowerCase()),
+    )
     : contacts;
 
   // ── Relation picker ───────────────────────────────────────
@@ -304,8 +304,8 @@ export default function ContactsPage() {
   // ── Filtered picker contacts ──────────────────────────────
   const filteredPicker = pickerSearch.trim()
     ? pickerContacts.filter((c) =>
-        c.name?.toLowerCase().includes(pickerSearch.toLowerCase()),
-      )
+      c.name?.toLowerCase().includes(pickerSearch.toLowerCase()),
+    )
     : pickerContacts;
 
   return (
@@ -959,7 +959,7 @@ const styles = StyleSheet.create({
   // Bottom nav
   bottomNav: {
     position: "absolute",
-    bottom: 0,
+    bottom: 18,
     left: 0,
     right: 0,
     backgroundColor: "#fff",
