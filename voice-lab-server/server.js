@@ -40,13 +40,23 @@ const STT_BASE = (process.env.STT_BASE_URL || "https://api.groq.com/openai/v1").
 const STT_KEY = process.env.STT_API_KEY || (BASE === STT_BASE ? KEY : "");
 const STT_MODEL = process.env.STT_MODEL || "whisper-large-v3-turbo";
 
+// Internet look-ups ("who won the match", "dollar rate"): the main model hands these to a
+// model that can search the web. Groq's "groq/compound-mini" does that. Set SEARCH_MODEL=off to disable.
+const SEARCH_MODEL = process.env.SEARCH_MODEL || "groq/compound-mini";
+const SEARCH_ON = SEARCH_MODEL.toLowerCase() !== "off";
+
+// Weather: Open-Meteo is free and needs no key.
+const WEATHER_BASE = (process.env.WEATHER_BASE_URL || "https://api.open-meteo.com").replace(/\/+$/, "");
+const GEO_BASE = (process.env.GEOCODE_BASE_URL || "https://geocoding-api.open-meteo.com").replace(/\/+$/, "");
+const DEFAULT_CITY = process.env.DEFAULT_CITY || "Lahore";   // used when the phone sends no location
+
 const ACCESS_CODE = process.env.ACCESS_CODE || "";           // protects a public tunnel
 const MAX_JSON = 20 * 1024;
 const MAX_AUDIO = 5 * 1024 * 1024;
 const TIMEOUT_MS = 25000;
 
 // ── the assistant's personality ─────────────────────────────────────
-function systemPrompt(tz) {
+function systemPrompt(tz, liveLines = []) {
   let now;
   try {
     now = new Intl.DateTimeFormat("en-US", { timeZone: tz, dateStyle: "full", timeStyle: "short" }).format(new Date());
@@ -54,7 +64,7 @@ function systemPrompt(tz) {
     tz = "UTC";
     now = new Date().toUTCString();
   }
-  return [
+  const lines = [
     "You are MotoSafe, the voice assistant built into a motorcycle rider's helmet.",
     "Your answers are spoken aloud through the helmet speaker while the rider is riding, so:",
     "- Answer in one or two short sentences (under 40 words) unless the rider explicitly asks for more.",
@@ -62,13 +72,126 @@ function systemPrompt(tz) {
     "- Say numbers and units the way a person would say them out loud.",
     "- Reply in the language the rider used.",
     "- Never encourage speeding or any unsafe riding.",
-    "- You cannot yet control navigation, calls or messages, and you do not know the rider's location or live weather. If asked, say so briefly instead of guessing.",
-    `The current local date and time is ${now} (timezone ${tz}).`,
-  ].join("\n");
+    "- You cannot yet control navigation, calls or messages. If asked, say so briefly instead of guessing.",
+    "- LIVE DATA below is measured right now. Use it for battery, weather and location questions and never contradict it. If something is not listed there, say you don't have it.",
+  ];
+  if (SEARCH_ON) {
+    lines.push(
+      "- If the question needs fresh facts from the internet that LIVE DATA does not contain (news, sports scores, prices, exchange rates, who currently holds a position, recent events), reply with exactly: [[SEARCH]] followed by a short English search query, and nothing else. Never use [[SEARCH]] for anything you can answer without the internet."
+    );
+  } else {
+    lines.push("- You cannot look things up on the internet. For fresh facts you don't know, say so briefly.");
+  }
+  lines.push(`The current local date and time is ${now} (timezone ${tz}).`);
+  if (liveLines.length) lines.push("LIVE DATA:", ...liveLines.map((l) => "- " + l));
+  return lines.join("\n");
 }
 
 function cleanForSpeech(s) {
-  return String(s || "").replace(/https?:\/\/\S+/g, "").replace(/[*_`#>~|]/g, "").replace(/\s+/g, " ").trim();
+  return String(s || "")
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/[*_`#>~|]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// ── live data: what the phone knows + weather ───────────────────────
+const num = (v, lo, hi) => (typeof v === "number" && isFinite(v) && v >= lo && v <= hi ? v : null);
+
+// The app sends { phone:{battery,pluggedIn}, helmet:{battery,connected,fw}, loc:{lat,lon} }.
+// Only numbers/booleans/short strings are accepted, so nothing from the app can inject text into the prompt.
+function cleanContext(c) {
+  const out = {};
+  if (!c || typeof c !== "object") return out;
+  if (c.phone && typeof c.phone === "object") {
+    const b = num(c.phone.battery, 0, 100);
+    if (b !== null) out.phone = { battery: Math.round(b), pluggedIn: c.phone.pluggedIn === true };
+  }
+  if (c.helmet && typeof c.helmet === "object") {
+    out.helmet = {
+      battery: num(c.helmet.battery, 0, 100) === null ? null : Math.round(c.helmet.battery),
+      connected: c.helmet.connected === true,
+    };
+  }
+  if (c.loc && typeof c.loc === "object") {
+    const lat = num(c.loc.lat, -90, 90), lon = num(c.loc.lon, -180, 180);
+    if (lat !== null && lon !== null) out.loc = { lat: Math.round(lat * 100) / 100, lon: Math.round(lon * 100) / 100 };
+  }
+  return out;
+}
+
+const WEATHER_WORDS = /\b(weather|temperature|forecast|raining|rain|humidity|humid|windy|wind speed|sunny|cloudy|storm|mausam|barish|how (hot|cold|warm)|will it rain|is it (hot|cold|raining))\b|موسم|بارش|گرمی|سردی/i;
+const CODE_TEXT = {
+  0: "clear sky", 1: "mostly clear", 2: "partly cloudy", 3: "overcast", 45: "foggy", 48: "foggy",
+  51: "light drizzle", 53: "drizzle", 55: "heavy drizzle", 61: "light rain", 63: "rain", 65: "heavy rain",
+  71: "light snow", 73: "snow", 75: "heavy snow", 80: "light showers", 81: "showers", 82: "heavy showers",
+  95: "thunderstorm", 96: "thunderstorm with hail", 99: "thunderstorm with hail",
+};
+
+async function getJson(url) {
+  return withTimeout(async (signal) => {
+    const r = await fetch(url, { signal });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  });
+}
+
+// "weather in Karachi" → "Karachi"
+function cityFromMessage(m) {
+  const x = /\b(?:in|at|for|of)\s+([A-Za-z][A-Za-z .'-]{1,30}?)(?:\s+(?:today|tomorrow|now|right now|tonight|please)\b|[?.!,]|$)/i.exec(m);
+  const city = x?.[1]?.trim();
+  return city && !/^(the|my|this|that|here|it)$/i.test(city) ? city : null;
+}
+
+async function weatherLines(message, loc) {
+  let lat, lon, place = "";
+  const named = cityFromMessage(message);
+  try {
+    if (named) {
+      const g = await getJson(`${GEO_BASE}/v1/search?name=${encodeURIComponent(named)}&count=1&language=en&format=json`);
+      const hit = g?.results?.[0];
+      if (hit) { lat = hit.latitude; lon = hit.longitude; place = hit.name; }
+    }
+    if (lat === undefined && loc) { lat = loc.lat; lon = loc.lon; place = "your location"; }
+    if (lat === undefined) {
+      const g = await getJson(`${GEO_BASE}/v1/search?name=${encodeURIComponent(DEFAULT_CITY)}&count=1&language=en&format=json`);
+      const hit = g?.results?.[0];
+      if (hit) { lat = hit.latitude; lon = hit.longitude; place = hit.name + " (default city, phone location unavailable)"; }
+    }
+    if (lat === undefined) return ["Weather: could not find that place."];
+    const w = await getJson(
+      `${WEATHER_BASE}/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m` +
+      `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code` +
+      `&timezone=auto&forecast_days=2`
+    );
+    const c = w.current || {}, d = w.daily || {};
+    const out = [
+      `Weather for ${place}: now ${Math.round(c.temperature_2m)} degrees Celsius (feels like ${Math.round(c.apparent_temperature)}), ` +
+      `${CODE_TEXT[c.weather_code] || "unknown conditions"}, humidity ${Math.round(c.relative_humidity_2m)} percent, wind ${Math.round(c.wind_speed_10m)} kilometres per hour.`,
+      `Today: high ${Math.round(d.temperature_2m_max?.[0])}, low ${Math.round(d.temperature_2m_min?.[0])}, ` +
+      `chance of rain ${Math.round(d.precipitation_probability_max?.[0] ?? 0)} percent, ${CODE_TEXT[d.weather_code?.[0]] || "mixed"}.`,
+      `Tomorrow: high ${Math.round(d.temperature_2m_max?.[1])}, low ${Math.round(d.temperature_2m_min?.[1])}, ` +
+      `chance of rain ${Math.round(d.precipitation_probability_max?.[1] ?? 0)} percent, ${CODE_TEXT[d.weather_code?.[1]] || "mixed"}.`,
+    ];
+    return out;
+  } catch (e) {
+    console.log("[weather] failed:", e.message);
+    return ["Weather: the weather service could not be reached right now."];
+  }
+}
+
+async function liveLines(ctx, message) {
+  const lines = [];
+  if (ctx.phone) lines.push(`Phone battery: ${ctx.phone.battery} percent${ctx.phone.pluggedIn ? ", charging / plugged in" : ", not charging"}.`);
+  else lines.push("Phone battery: unknown.");
+  if (ctx.helmet) {
+    if (!ctx.helmet.connected) lines.push("Helmet: not connected right now" + (ctx.helmet.battery !== null ? `, last known battery ${ctx.helmet.battery} percent.` : "; battery unknown."));
+    else lines.push(ctx.helmet.battery !== null ? `Helmet battery: ${ctx.helmet.battery} percent (connected).` : "Helmet is connected but its battery level is unknown.");
+  } else lines.push("Helmet: no data available.");
+  if (WEATHER_WORDS.test(message)) lines.push(...(await weatherLines(message, ctx.loc)));
+  return lines;
 }
 
 // Whisper sometimes "hears" these on silence/noise. Treat them as nothing said.
@@ -157,9 +280,9 @@ async function withTimeout(fn) {
   } finally { clearTimeout(timer); }
 }
 
-async function callLLM(messages) {
-  const payload = { model: MODEL, messages, temperature: 0.5, max_tokens: 1000 };
-  if (REASONING) payload.reasoning_effort = REASONING;
+async function callLLM(messages, model = MODEL) {
+  const payload = { model, messages, temperature: 0.5, max_tokens: 1000 };
+  if (REASONING && model === MODEL) payload.reasoning_effort = REASONING;
   return withTimeout(async (signal) => {
     const r = await fetch(`${BASE}/chat/completions`, {
       method: "POST",
@@ -193,17 +316,46 @@ async function transcribe(file, lang) {
   });
 }
 
-async function answer(message, historyIn, tz) {
+async function answer(message, historyIn, tz, ctxIn) {
   const history = (Array.isArray(historyIn) ? historyIn : [])
     .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
     .slice(-10)
     .map((m) => ({ role: m.role, content: m.content.slice(0, 600) }));
+  const ctx = cleanContext(ctxIn);
+  const lines = await liveLines(ctx, message);
   const raw = await callLLM([
-    { role: "system", content: systemPrompt(String(tz || "UTC")) },
+    { role: "system", content: systemPrompt(String(tz || "UTC"), lines) },
     ...history,
     { role: "user", content: message },
   ]);
+
+  // The model asked for an internet look-up → hand it to the search-capable model.
+  const stripped = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  const ask = SEARCH_ON && /^\[\[SEARCH\]\]\s*([\s\S]+)/i.exec(stripped);
+  if (ask) {
+    const query = ask[1].trim().slice(0, 200);
+    console.log(`[search] "${query}" via ${SEARCH_MODEL}`);
+    try {
+      const found = await callLLM(
+        [
+          { role: "system", content: "Answer the question using current information from the web. Reply in one or two short plain sentences (under 40 words), no markdown, no links. If you are not sure, say so briefly." },
+          { role: "user", content: `${query}\n(Rider's original words: ${message})` },
+        ],
+        SEARCH_MODEL
+      );
+      return cleanForSpeech(found) || "I couldn't find that right now.";
+    } catch (e) {
+      console.log("[search] failed:", e.message);
+      return "Sorry, I couldn't look that up right now.";
+    }
+  }
   return cleanForSpeech(raw) || "Sorry, I don't have an answer for that.";
+}
+
+// context arrives as an object (typed chat) or as a JSON string (voice upload)
+function parseCtx(v) {
+  if (typeof v === "string") { try { return JSON.parse(v); } catch (_) { return null; } }
+  return v;
 }
 
 // ── routes ──────────────────────────────────────────────────────────
@@ -240,7 +392,7 @@ const server = http.createServer(async (req, res) => {
       const message = String(body.message || "").trim().slice(0, 800);
       if (!message) return send(res, 400, { error: "Empty message." });
       const t0 = Date.now();
-      const reply = await answer(message, body.history, body.tz);
+      const reply = await answer(message, body.history, body.tz, parseCtx(body.context));
       console.log(`[chat ] ${Date.now() - t0} ms  "${message}" -> "${reply}"`);
       return send(res, 200, { reply, ms: Date.now() - t0, model: MODEL });
     }
@@ -262,7 +414,7 @@ const server = http.createServer(async (req, res) => {
       }
       let history = [];
       try { history = JSON.parse(fields.history || "[]"); } catch (_) {}
-      const reply = await answer(transcript.slice(0, 800), history, fields.tz);
+      const reply = await answer(transcript.slice(0, 800), history, fields.tz, parseCtx(fields.context));
       const total = Date.now() - t0;
       console.log(`[voice] stt ${sttMs} ms + llm ${total - sttMs} ms  "${transcript}" -> "${reply}"`);
       return send(res, 200, { transcript, reply, ms: total, stt_ms: sttMs, model: MODEL });
@@ -284,5 +436,6 @@ server.listen(PORT, "0.0.0.0", () => {
     }
   }
   console.log(`\n  LLM : ${MODEL} @ ${BASE}  ${KEY ? "(key found)" : "(NO KEY — create .env)"}`);
-  console.log(`  STT : ${STT_MODEL} @ ${STT_BASE}  ${STT_KEY ? "(key found)" : "(NO KEY)"}\n`);
+  console.log(`  STT : ${STT_MODEL} @ ${STT_BASE}  ${STT_KEY ? "(key found)" : "(NO KEY)"}`);
+  console.log(`  Web : ${SEARCH_ON ? SEARCH_MODEL : "off"}   Weather: Open-Meteo (default city ${DEFAULT_CITY})\n`);
 });

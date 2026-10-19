@@ -23,6 +23,7 @@ import { useRouter } from "expo-router";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 
 import { usePhoneIO } from "../voice/phoneIO";
+import { useLiveContext } from "../voice/liveContext";
 import { useVoiceAssistant } from "../voice/useVoiceAssistant";
 import * as api from "../voice/voiceApi";
 
@@ -44,7 +45,8 @@ export default function VoiceLab() {
   const router = useRouter();
   const io = usePhoneIO();
   const [lang, setLang] = useState("auto");
-  const { state, level, messages, press, sendText, clear } = useVoiceAssistant({ io, api, lang });
+  const live = useLiveContext();
+  const { state, level, messages, press, sendText, clear } = useVoiceAssistant({ io, api, lang, getContext: live.get });
 
   const [typed, setTyped] = useState("");
   const [showSettings, setShowSettings] = useState(false);

@@ -75,10 +75,11 @@ try { FS = require("expo-file-system/legacy"); } catch (_) {
   try { FS = require("expo-file-system"); } catch (_) {}
 }
 
-export async function askVoice({ audio, history, lang, signal }) {
+export async function askVoice({ audio, history, lang, context, signal }) {
   console.log("[voiceApi] uploading recording:", audio.uri);
   const params = { tz: tz(), history: JSON.stringify(history || []) };
   if (lang && lang !== "auto") params.lang = lang;
+  if (context) params.context = JSON.stringify(context);
 
   if (FS?.uploadAsync) {
     const { url, code } = await getServer();
@@ -111,11 +112,11 @@ export async function askVoice({ audio, history, lang, signal }) {
 }
 
 // typed text → { transcript, reply, ms }
-export async function askText({ message, history, signal }) {
+export async function askText({ message, history, context, signal }) {
   const out = await call("/api/chat", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ message, history: history || [], tz: tz() }),
+    body: JSON.stringify({ message, history: history || [], tz: tz(), context: context || undefined }),
     signal,
   });
   return { transcript: message, reply: out.reply, ms: out.ms };

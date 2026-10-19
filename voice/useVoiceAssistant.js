@@ -23,7 +23,7 @@ const NOTES = {
   error: "Couldn't start the microphone. Tap and try again.",
 };
 
-export function useVoiceAssistant({ io, api, lang = "auto" }) {
+export function useVoiceAssistant({ io, api, lang = "auto", getContext }) {
   const [state, setStateRaw] = useState("idle");
   const [level, setLevel] = useState(-60);          // mic level in dB, for the little meter
   const [messages, setMessages] = useState([]);
@@ -34,6 +34,8 @@ export function useVoiceAssistant({ io, api, lang = "auto" }) {
   const abort = useRef(null);
   const langRef = useRef(lang);
   langRef.current = lang;
+  const ctxRef = useRef(getContext);          // live phone/helmet/location data, fetched per question
+  ctxRef.current = getContext;
 
   const setState = useCallback((s) => { stateRef.current = s; setStateRaw(s); }, []);
   const add = useCallback((kind, text, meta) => {
@@ -57,9 +59,11 @@ export function useVoiceAssistant({ io, api, lang = "auto" }) {
     const signal = abort.current.signal;
     let out;
     try {
+      let context = null;
+      try { context = (await ctxRef.current?.()) || null; } catch (_) {}
       out = audio
-        ? await api.askVoice({ audio, history: history.current.slice(-8), lang: langRef.current, signal })
-        : await api.askText({ message: text, history: history.current.slice(-8), signal });
+        ? await api.askVoice({ audio, history: history.current.slice(-8), lang: langRef.current, context, signal })
+        : await api.askText({ message: text, history: history.current.slice(-8), context, signal });
     } catch (e) {
       if (id !== run.current || e.name === "AbortError") return;
       add("error", e.message);
@@ -94,7 +98,10 @@ export function useVoiceAssistant({ io, api, lang = "auto" }) {
     if (id !== run.current) return;
     setLevel(-60);
     if (res.empty) {
-      if (res.reason !== "cancel") add("note", NOTES[res.reason] || NOTES.error);
+      if (res.reason !== "cancel") {
+        const base = NOTES[res.reason] || NOTES.error;
+        add("note", res.message ? `${base} (${res.message})` : base);
+      }
       setState("idle");
       return;
     }
@@ -120,8 +127,11 @@ export function useVoiceAssistant({ io, api, lang = "auto" }) {
 
   const clear = useCallback(() => { cancelAll(); history.current = []; setMessages([]); }, [cancelAll]);
 
-  // leaving the screen must stop the mic and the speaker
-  useEffect(() => () => { cancelAll(); }, [cancelAll]);
+  // leaving the screen must stop the mic and the speaker.
+  // Runs ONLY on unmount (a changing dependency here used to cancel a running session).
+  const cancelRef = useRef(cancelAll);
+  cancelRef.current = cancelAll;
+  useEffect(() => () => { cancelRef.current(); }, []);
 
   return { state, level, messages, press, cancel: cancelAll, sendText, clear };
 }
