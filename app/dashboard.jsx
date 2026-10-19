@@ -390,6 +390,28 @@ export default function Dashboard() {
           onDismissDrowsiness={dismissDrowsiness}
         />
 
+                {/* Voice assistant (helmet simulator) */}
+          <View style={{ paddingHorizontal: 20, paddingTop: 16 }}>
+          <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => router.push("/voice-lab")}
+          style={{
+            flexDirection: "row", alignItems: "center", gap: 14,
+            backgroundColor: "#fff", borderRadius: 16, padding: 16,
+          }}
+          >
+          <View style={{ width: 50, height: 50, borderRadius: 14, backgroundColor: "#2563eb", alignItems: "center", justifyContent: "center" }}>
+            <Feather name="mic" size={22} color="#fff" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 15, fontWeight: "700", color: "#111827" }}>Voice assistant</Text>
+            <Text style={{ fontSize: 13, color: "#6b7280", marginTop: 4 }}>Helmet simulator · ask anything hands-free</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color="#d1d5db" />
+          </TouchableOpacity>
+          </View>
+
+
         {/* Ride session */}
         <View style={styles.section}>
           <View style={styles.rideCard}>

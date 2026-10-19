@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<title>MotoSafe Voice Lab</title>
+<style>
+  :root{
+    --bg:#0b1220; --card:#121c31; --line:#1f2d4a; --text:#e8eefc; --muted:#8fa3c7;
+    --blue:#2563eb; --green:#22c55e; --amber:#f59e0b; --red:#ef4444;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:var(--bg);color:var(--text);
+    font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:520px;margin:0 auto;padding:16px;padding-bottom:calc(24px + env(safe-area-inset-bottom))}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+  h1{font-size:18px;margin:0;letter-spacing:.2px}
+  h1 small{display:block;font-weight:400;color:var(--muted);font-size:12px;margin-top:2px}
+  .srv{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .dot{width:9px;height:9px;border-radius:50%;background:#4b5b7c;display:inline-block}
+  .dot.ok{background:var(--green)} .dot.warn{background:var(--amber)} .dot.bad{background:var(--red)}
+
+  .banner{background:#2a1f0a;border:1px solid #6b4a10;color:#fcd9a0;border-radius:12px;padding:10px 12px;font-size:13px;margin-bottom:12px;display:none}
+  .banner.show{display:block}
+
+  .chips{display:flex;gap:8px;margin-bottom:6px}
+  .chip{flex:1;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 10px;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px}
+  .chip b{color:var(--text);font-weight:600}
+  .chip.on{border-color:var(--blue);color:var(--text)}
+  .chip.on .dot{background:var(--blue);box-shadow:0 0 0 4px rgba(37,99,235,.25)}
+  .chip.on.spk .dot{background:var(--green);box-shadow:0 0 0 4px rgba(34,197,94,.25)}
+
+  .stage{display:flex;flex-direction:column;align-items:center;padding:22px 0 8px}
+  #btn{
+    width:176px;height:176px;border-radius:50%;border:0;cursor:pointer;color:#fff;
+    font-weight:700;font-size:15px;letter-spacing:.4px;text-transform:uppercase;
+    background:radial-gradient(circle at 35% 30%,#4c86ff,var(--blue) 60%,#1b43a8);
+    box-shadow:0 10px 30px rgba(37,99,235,.35), inset 0 -6px 14px rgba(0,0,0,.25);
+    transition:transform .08s, background .2s, box-shadow .2s; position:relative; user-select:none;
+  }
+  #btn:active{transform:scale(.96)}
+  #btn span{display:block;font-size:11px;font-weight:500;opacity:.85;text-transform:none;letter-spacing:0;margin-top:4px}
+  #btn.listening{animation:pulse 1.2s infinite;background:radial-gradient(circle at 35% 30%,#58a6ff,#2563eb 60%,#1b43a8)}
+  #btn.beeping{box-shadow:0 0 0 10px rgba(37,99,235,.25), 0 10px 30px rgba(37,99,235,.4)}
+  #btn.thinking{background:radial-gradient(circle at 35% 30%,#fbbf24,var(--amber) 60%,#b45309);animation:breathe 1.4s infinite;box-shadow:0 10px 30px rgba(245,158,11,.3)}
+  #btn.speaking{background:radial-gradient(circle at 35% 30%,#4ade80,var(--green) 60%,#15803d);animation:breathe 1s infinite;box-shadow:0 10px 30px rgba(34,197,94,.3)}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(88,166,255,.55)}100%{box-shadow:0 0 0 38px rgba(88,166,255,0)}}
+  @keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
+  #live{min-height:44px;margin-top:16px;text-align:center;color:var(--muted);font-size:15px;max-width:100%}
+  #live.hot{color:var(--text)}
+
+  #log{display:flex;flex-direction:column;gap:8px;margin:8px 0 14px}
+  .b{padding:10px 12px;border-radius:14px;max-width:88%;word-wrap:break-word;font-size:15px}
+  .b.user{align-self:flex-end;background:var(--blue);border-bottom-right-radius:4px}
+  .b.bot{align-self:flex-start;background:var(--card);border:1px solid var(--line);border-bottom-left-radius:4px}
+  .b.error{align-self:stretch;background:#2a1111;border:1px solid #6b1d1d;color:#fecaca;font-size:13px}
+  .b.note{align-self:center;color:var(--muted);font-size:12px;background:none;padding:2px}
+  .meta{font-size:11px;color:var(--muted);margin-top:4px}
+
+  form{display:flex;gap:8px;margin-bottom:12px}
+  input[type=text],input[type=password],select{
+    background:var(--card);border:1px solid var(--line);color:var(--text);border-radius:12px;
+    padding:11px 12px;font-size:16px;width:100%;min-width:0}
+  form button{background:var(--card);border:1px solid var(--line);color:var(--text);border-radius:12px;padding:0 16px;font-size:15px;cursor:pointer}
+  details{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+  summary{cursor:pointer;color:var(--muted);font-size:14px}
+  .row{display:flex;flex-direction:column;gap:4px;margin-top:12px}
+  .row label{font-size:12px;color:var(--muted)}
+  .row.inline{flex-direction:row;align-items:center;justify-content:space-between}
+  input[type=range]{width:100%}
+  .link{background:none;border:0;color:var(--blue);padding:0;font-size:13px;cursor:pointer;text-align:left}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>MotoSafe Voice Lab<small>Helmet simulator: button + mic + speaker</small></h1>
+    <div class="srv"><span id="srvDot" class="dot"></span><span id="srvTxt">checking…</span></div>
+  </header>
+
+  <div id="banner" class="banner"></div>
+
+  <div class="chips">
+    <div id="chipMic" class="chip"><span class="dot"></span><span>Helmet mic <b id="micTxt">idle</b></span></div>
+    <div id="chipSpk" class="chip spk"><span class="dot"></span><span>Helmet speaker <b id="spkTxt">idle</b></span></div>
+  </div>
+
+  <div class="stage">
+    <button id="btn" type="button" aria-live="polite">Helmet button<span id="btnSub">tap to talk</span></button>
+    <div id="live"></div>
+  </div>
+
+  <div id="log"></div>
+
+  <form id="typeForm" autocomplete="off">
+    <input id="typed" type="text" placeholder="…or type a question" enterkeyhint="send">
+    <button type="submit">Send</button>
+  </form>
+
+  <details>
+    <summary>Settings</summary>
+    <div class="row">
+      <label for="lang">I speak (mic language)</label>
+      <select id="lang">
+        <option value="en-US">English (US)</option>
+        <option value="en-GB">English (UK)</option>
+        <option value="en-PK">English (Pakistan)</option>
+        <option value="en-IN">English (India)</option>
+        <option value="ur-PK">Urdu (Pakistan)</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="voice">Helmet speaker voice</label>
+      <select id="voice"></select>
+    </div>
+    <div class="row">
+      <label for="rate">Speech speed: <span id="rateTxt">1.0</span>×</label>
+      <input id="rate" type="range" min="0.7" max="1.5" step="0.05" value="1">
+    </div>
+    <div class="row inline">
+      <label for="beepOn">Start-listening beep (like the helmet)</label>
+      <input id="beepOn" type="checkbox" checked>
+    </div>
+    <div class="row" id="codeRow" style="display:none">
+      <label for="code">Access code</label>
+      <input id="code" type="password" placeholder="set in .env as ACCESS_CODE">
+    </div>
+    <div class="row">
+      <button type="button" class="link" id="clear">Clear conversation</button>
+    </div>
+  </details>
+</div>
+
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (_) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} },
+  };
+
+  // ── state ─────────────────────────────────────────────────────────
+  // idle → beeping → listening → thinking → speaking → idle
+  let state = "idle";
+  let runId = 0;               // bumping this cancels whatever is in flight
+  let rec = null, abortCtl = null, audioCtx = null;
+  let voices = [];
+  const history = [];          // {role, content} sent with every question
+
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const LABELS = {
+    idle: "tap to talk", beeping: "get ready…", listening: "speak now",
+    thinking: "thinking…", speaking: "tap to interrupt",
+  };
+
+  function setState(s) {
+    state = s;
+    $("#btn").className = s === "idle" ? "" : s;
+    $("#btnSub").textContent = LABELS[s];
+    $("#chipMic").classList.toggle("on", s === "listening");
+    $("#micTxt").textContent = s === "listening" ? "listening" : "idle";
+    $("#chipSpk").classList.toggle("on", s === "beeping" || s === "speaking");
+    $("#spkTxt").textContent = s === "beeping" ? "beep" : s === "speaking" ? "speaking" : "idle";
+    if (s !== "listening") $("#live").classList.remove("hot");
+  }
+
+  function bubble(kind, text, meta) {
+    const d = document.createElement("div");
+    d.className = "b " + kind;
+    d.textContent = text;
+    if (meta) { const m = document.createElement("div"); m.className = "meta"; m.textContent = meta; d.appendChild(m); }
+    $("#log").appendChild(d);
+    d.scrollIntoView({ block: "end", behavior: "smooth" });
+  }
+
+  // ── environment checks ────────────────────────────────────────────
+  function checkEnvironment() {
+    const msgs = [];
+    if (!window.isSecureContext) {
+      msgs.push("This page is not HTTPS, so the browser will block the microphone. Use http://localhost on your computer, an HTTPS tunnel, or the Chrome flag described in the README. Typing still works.");
+    } else if (!SR) {
+      msgs.push("This browser has no speech recognition. Use Chrome (Android or desktop). Typing still works.");
+    }
+    if (msgs.length) { $("#banner").textContent = msgs.join(" "); $("#banner").classList.add("show"); }
+  }
+
+  async function checkServer() {
+    try {
+      const h = await (await fetch("/api/health")).json();
+      $("#srvDot").className = "dot " + (h.hasKey ? "ok" : "warn");
+      $("#srvTxt").textContent = h.hasKey ? h.model : "no API key";
+      if (h.needsCode) { $("#codeRow").style.display = ""; if (!$("#code").value) document.querySelector("details").open = true; }
+    } catch (_) {
+      $("#srvDot").className = "dot bad";
+      $("#srvTxt").textContent = "server offline";
+    }
+  }
+
+  function api(path, opts = {}) {
+    const headers = { ...(opts.headers || {}) };
+    const code = $("#code").value;
+    if (code) headers["x-access-code"] = code;
+    return fetch(path, { ...opts, headers });
+  }
+
+  // ── helmet speaker: the start-listening beep (same 1200 Hz / 80 ms as the firmware) ──
+  function ensureAudio() {
+    if (!audioCtx) { const AC = window.AudioContext || window.webkitAudioContext; if (AC) audioCtx = new AC(); }
+    if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+  }
+  function beep() {
+    return new Promise((resolve) => {
+      if (!$("#beepOn").checked || !audioCtx) return resolve();
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.frequency.value = 1200; o.type = "sine";
+      const t = audioCtx.currentTime;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.4, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+      o.connect(g).connect(audioCtx.destination);
+      o.start(t); o.stop(t + 0.1);
+      setTimeout(resolve, 160);     // let the beep finish so the mic doesn't hear it
+    });
+  }
+
+  // ── helmet speaker: text-to-speech ────────────────────────────────
+  function loadVoices() {
+    voices = (window.speechSynthesis ? speechSynthesis.getVoices() : []) || [];
+    const sel = $("#voice"), saved = store.get("voice", "");
+    sel.innerHTML = "";
+    const auto = new Option("Automatic", ""); sel.add(auto);
+    voices.forEach((v) => sel.add(new Option(`${v.name} (${v.lang})`, v.voiceURI)));
+    sel.value = saved;
+    if (sel.value !== saved) sel.value = "";
+  }
+  function pickVoice(text) {
+    const uri = $("#voice").value;
+    const arabicScript = /[؀-ۿ]/.test(text);
+    if (uri && !arabicScript) return voices.find((v) => v.voiceURI === uri) || null;
+    const want = arabicScript ? "ur" : $("#lang").value.slice(0, 2);
+    return voices.find((v) => v.lang.toLowerCase().startsWith(want)) || null;
+  }
+  function speak(text) {
+    return new Promise((resolve) => {
+      if (!("speechSynthesis" in window)) return resolve();
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      const v = pickVoice(text);
+      if (v) { u.voice = v; u.lang = v.lang; } else { u.lang = /[؀-ۿ]/.test(text) ? "ur-PK" : $("#lang").value; }
+      u.rate = Number($("#rate").value);
+      let poll, done = false;
+      const t0 = Date.now();
+      const finish = () => { if (done) return; done = true; clearInterval(poll); resolve(); };
+      u.onend = finish; u.onerror = finish;
+      speechSynthesis.speak(u);
+      // Chrome sometimes never fires onend — this makes sure we always return to idle.
+      poll = setInterval(() => {
+        if (Date.now() - t0 > 800 && !speechSynthesis.speaking && !speechSynthesis.pending) finish();
+      }, 300);
+    });
+  }
+
+  // ── the helmet button ─────────────────────────────────────────────
+  function cancelAll() {
+    runId++;
+    try { rec && rec.abort(); } catch (_) {}
+    try { abortCtl && abortCtl.abort(); } catch (_) {}
+    try { window.speechSynthesis && speechSynthesis.cancel(); } catch (_) {}
+    rec = null;
+    $("#live").textContent = "";
+    setState("idle");
+  }
+
+  function primeSpeech() {            // browsers only allow speech after a tap
+    ensureAudio();
+    if (window.speechSynthesis) {
+      const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u);
+    }
+  }
+
+  async function press() {
+    primeSpeech();
+    if (state === "idle") return startTalking();
+    const wasSpeaking = state === "speaking";
+    cancelAll();                       // tap during beep/listen/think = cancel, during speech = interrupt
+    if (wasSpeaking) startTalking();   // like the real helmet: interrupt and listen again
+  }
+
+  async function startTalking() {
+    const id = ++runId;
+    $("#live").textContent = "";
+    setState("beeping");
+    await beep();
+    if (id !== runId) return;
+    if (!SR || !window.isSecureContext) {
+      setState("idle");
+      bubble("note", "Microphone not available here — type your question instead.");
+      return;
+    }
+    listen(id);
+  }
+
+  function listen(id) {
+    let finalText = "", lastError = "";
+    rec = new SR();
+    rec.lang = $("#lang").value;
+    rec.interimResults = true;
+    rec.continuous = false;
+    rec.maxAlternatives = 1;
+    rec.onstart = () => { if (id === runId) setState("listening"); };
+    rec.onresult = (e) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript;
+      }
+      $("#live").textContent = (finalText + " " + interim).trim();
+      $("#live").classList.add("hot");
+    };
+    rec.onerror = (e) => { lastError = e.error; };
+    rec.onend = () => {
+      if (id !== runId) return;                      // cancelled
+      const text = finalText.trim();
+      $("#live").textContent = "";
+      if (text) return ask(text, id);
+      setState("idle");
+      bubble("note",
+        lastError === "not-allowed" || lastError === "service-not-allowed"
+          ? "Microphone blocked. Allow the mic for this site (needs HTTPS or localhost)."
+          : lastError === "network" ? "Speech service not reachable — check your internet."
+          : "I didn't catch that. Tap and try again.");
+    };
+    try { rec.start(); } catch (e) { setState("idle"); bubble("error", "Could not start the mic: " + e.message); }
+  }
+
+  // ── ask the assistant ─────────────────────────────────────────────
+  async function ask(text, id) {
+    bubble("user", text);
+    setState("thinking");
+    const t0 = performance.now();
+    abortCtl = new AbortController();
+    let reply = "", err = "", model = "";
+    try {
+      const r = await api("/api/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          message: text,
+          history: history.slice(-8),
+          tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }),
+        signal: abortCtl.signal,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
+      reply = j.reply; model = j.model;
+    } catch (e) {
+      if (e.name === "AbortError" || id !== runId) return;
+      err = e.message;
+    }
+    if (id !== runId) return;
+    const ms = Math.round(performance.now() - t0);
+    if (err) {
+      bubble("error", err);
+      reply = "Sorry, I can't reach my brain right now.";
+    } else {
+      history.push({ role: "user", content: text }, { role: "assistant", content: reply });
+      bubble("bot", reply, `${ms} ms · ${model}`);
+    }
+    setState("speaking");
+    await speak(reply);
+    if (id === runId) setState("idle");
+  }
+
+  // ── wiring ────────────────────────────────────────────────────────
+  $("#btn").addEventListener("click", press);
+
+  $("#typeForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = $("#typed").value.trim();
+    if (!text) return;
+    $("#typed").value = "";
+    primeSpeech();
+    cancelAll();
+    ask(text, ++runId);
+  });
+
+  $("#clear").addEventListener("click", () => { cancelAll(); history.length = 0; $("#log").innerHTML = ""; });
+
+  for (const [id, key] of [["lang", "lang"], ["voice", "voice"], ["rate", "rate"], ["code", "code"]]) {
+    const el = $("#" + id);
+    const saved = store.get(key, null);
+    if (saved !== null && id !== "voice") el.value = saved;
+    el.addEventListener("change", () => store.set(key, el.value));
+    el.addEventListener("input", () => { store.set(key, el.value); if (id === "rate") $("#rateTxt").textContent = Number(el.value).toFixed(2).replace(/0$/, ""); });
+  }
+  $("#beepOn").checked = store.get("beep", "1") === "1";
+  $("#beepOn").addEventListener("change", () => store.set("beep", $("#beepOn").checked ? "1" : "0"));
+  $("#rateTxt").textContent = Number($("#rate").value).toFixed(2).replace(/0$/, "");
+
+  if (window.speechSynthesis) {
+    loadVoices();
+    speechSynthesis.addEventListener("voiceschanged", loadVoices);
+  }
+  checkEnvironment();
+  checkServer();
+  setState("idle");
+})();
+</script>
+</body>
+</html>
